@@ -8,6 +8,8 @@
 #include <set>
 #include <unordered_set>
 
+#include "tag_detection/timer.h"
+
 double rad2deg(double rad) {
   return rad * 180.0 / M_PI;
 }
@@ -95,13 +97,9 @@ class LinePoints {
   }
 
   double GetMeanDirection() const {
-    // for(const auto& dir: angles_) {
-    //  std::cout << "  " << dir << std::endl;
-    //}
     const auto ave_y = y_sum_ / points_.size();
     const auto ave_x = x_sum_ / points_.size();
     const auto ave = std::atan2(ave_y, ave_x);
-    // std::cout << "average: " << ave << std::endl;
     return ave;
   }
 
@@ -467,6 +465,24 @@ bool CheckQuadSideLengths(const Quad &quad, const double side_length) {
   return true;
 }
 
+template <typename EigenPointContainer>
+std::vector<cv::Point2d> ToCvPoints(const EigenPointContainer &points) {
+  std::vector<cv::Point2d> cv_points;
+  for (const auto &pt : points) {
+    cv_points.push_back({pt.x(), pt.y()});
+  }
+  return cv_points;
+}
+
+void RefineEdges(const cv::Mat &image, Quad *quad) {
+  auto corners = ToCvPoints(quad->corners);
+  auto term_criteria = cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 40, 0.001);
+  cv::cornerSubPix(image, corners, {5, 5}, {-1, -1}, term_criteria);
+  for (int i = 0; i < 4; ++i) {
+    quad->corners[i] = {corners[i].x, corners[i].y};
+  }
+}
+
 std::vector<Quad> FindQuads(const std::vector<Line> &lines,
                             const std::map<int, std::set<int>> &line_connectivity,
                             const double min_side_length) {
@@ -492,7 +508,6 @@ cv::Mat VisualizeQuads(const cv::Mat &img, const std::vector<Quad> &quads) {
   cv::Mat viz = img.clone();
   int quad_counter{};
   for (const auto &quad : quads) {
-    // std::cout << "Quad " << quad_counter++ << std::endl;
     for (int i = 0; i < 4; ++i) {
       // std::cout << "  " << quad.corners[i].x() << ", " << quad.corners[i].y() << std::endl;
       const auto pt_a = quad.corners[i].cast<int>();
@@ -519,13 +534,13 @@ T GetMatMedian(const cv::Mat &mat) {
 }
 
 // TODO::rename function
-Eigen::MatrixXd DecodeTag(const cv::Mat &tag_img, const int width, const int height, const int border,
-              const int intensity_thresh) {
+Eigen::MatrixXd DecodeTag(const cv::Mat &tag_img, const int width, const int height,
+                          const int border, const int intensity_thresh) {
   const int total_width = width + border;
   const int total_height = height + border;
   const int cell_width = tag_img.cols / total_width;
   const int cell_height = tag_img.rows / total_height;
-  Eigen::MatrixXd tag_matrix(total_height, total_width); // TODO:: double check constructor order
+  Eigen::MatrixXd tag_matrix(total_height, total_width);  // TODO:: double check constructor order
   for (int i = 0; i < total_width; ++i) {
     for (int j = 0; j < total_height; ++j) {
       cv::Rect roi(i * cell_width, j * cell_height, cell_width, cell_height);
@@ -547,10 +562,10 @@ int DecodeQuad(const cv::Mat &img, const Quad &quad) {
   const auto H = cv::findHomography(corner_pts, rectified_pts);
   cv::Mat tag_rectified;
   cv::warpPerspective(img, tag_rectified, H, {100, 100});
-  std::cout << "Quad " << quad_counter << std::endl;
-  cv::imwrite("quad_" + std::to_string(quad_counter++) + ".png", tag_rectified);
+  // std::cout << "Quad " << quad_counter << std::endl;
+  // cv::imwrite("quad_" + std::to_string(quad_counter++) + ".png", tag_rectified);
   const auto tag_matrix = DecodeTag(tag_rectified, 6, 6, 1, 128);
-  std::cout << "Quad matrix: " << std::endl << tag_matrix << std::endl;
+  // std::cout << "Quad matrix: " << std::endl << tag_matrix << std::endl;
   return -1;
 }
 
@@ -564,17 +579,23 @@ std::vector<int> DecodeQuads(const cv::Mat &img, const std::vector<Quad> &quads)
 }
 
 void RunDetection(const cv::Mat &mat) {
-  const bool debug = true;
+  time_logger::TimeLogger timer;
+  time_logger::TimeLogger full_timer;
+  const bool debug = false;
   cv::Mat bw_mat;
   cv::cvtColor(mat, bw_mat, cv::COLOR_BGR2GRAY);
+  timer.logEvent("01_convert color");
   const auto img_gradients = CalculateImageGradients(bw_mat, debug);
 
-  constexpr double kAbsImgGradientThresh = 400;
+  timer.logEvent("02_Image gradients");
+
+  constexpr double kAbsImgGradientThresh = 100;
   constexpr double kMaxAngleClusterDiff = M_PI / 8;
   constexpr int kMinLineClusterSize = 10;
 
   const auto lines_points = ClusterGradientDirections(img_gradients, kAbsImgGradientThresh,
                                                       kMaxAngleClusterDiff, kMinLineClusterSize);
+  timer.logEvent("03_Cluster gradients");
   std::cout << lines_points.size() << " clusters found." << std::endl;
   if (debug) {
     cv::imwrite("03_gradient_thresh.png",
@@ -585,29 +606,39 @@ void RunDetection(const cv::Mat &mat) {
 
   constexpr double kMinLineLength = 8;
   const auto lines = MakeLines(lines_points, kMinLineLength);
+  timer.logEvent("04_Make lines");
   if (debug) {
     cv::imwrite("05_lines.png", VisualizeLines(mat, lines));
   }
 
-  constexpr double kMaxInterLineDistance = 4;
+  constexpr double kMaxInterLineDistance = 8;
   const auto line_connectivity = MakeLineConnectivity(lines, kMaxInterLineDistance);
+  timer.logEvent("05_Make line connectivity");
   if (debug) {
     const auto base_img = VisualizeLines(mat, lines);
     cv::imwrite("06_line_connectivity.png",
                 VisualizeLineConnectivity(base_img, lines, line_connectivity));
   }
 
-  const auto quads = FindQuads(lines, line_connectivity, kMinLineLength);
+  auto quads = FindQuads(lines, line_connectivity, kMinLineLength);
+  timer.logEvent("06_Find quads");
+  // for (auto &quad : quads) {
+  //  RefineEdges(mat, &quad);
+  //}
   std::cout << "Found " << quads.size() << " quads." << std::endl;
   if (debug) {
     cv::imwrite("07_quads.png", VisualizeQuads(mat, quads));
   }
 
   auto codes = DecodeQuads(mat, quads);
+  timer.logEvent("07_Decode quads");
+  timer.printLoggedEvents();
+  full_timer.logEvent("everything");
+  full_timer.printLoggedEvents();
 }
 
 int main() {
-  std::string image_path = "image.jpeg";
+  std::string image_path = "cube_cal_eg.png";
   cv::Mat img = cv::imread(image_path, cv::IMREAD_COLOR);
   if (img.empty()) {
     std::cout << "Could not read the image: " << image_path << std::endl;
@@ -618,4 +649,3 @@ int main() {
   std::cout << "all good" << std::endl;
   return 0;
 }
-

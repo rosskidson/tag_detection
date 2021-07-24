@@ -3,6 +3,8 @@ project( DisplayImage )
 
 set(CMAKE_CXX_STANDARD 17)
 
+include_directories(include)
+
 find_package(OpenCV REQUIRED)
 find_package(Eigen3 REQUIRED)
 

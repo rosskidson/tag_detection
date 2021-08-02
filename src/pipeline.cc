@@ -466,18 +466,19 @@ bool CheckQuadSideLengths(const Quad &quad, const double side_length) {
 }
 
 template <typename EigenPointContainer>
-std::vector<cv::Point2d> ToCvPoints(const EigenPointContainer &points) {
-  std::vector<cv::Point2d> cv_points;
+std::vector<cv::Point2f> ToCvPoints(const EigenPointContainer &points) {
+  std::vector<cv::Point2f> cv_points;
   for (const auto &pt : points) {
-    cv_points.push_back({pt.x(), pt.y()});
+    cv_points.push_back({float(pt.x()), float(pt.y())});
   }
   return cv_points;
 }
 
 void RefineEdges(const cv::Mat &image, Quad *quad) {
+  constexpr int kWinSize = 2;
   auto corners = ToCvPoints(quad->corners);
   auto term_criteria = cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 40, 0.001);
-  cv::cornerSubPix(image, corners, {5, 5}, {-1, -1}, term_criteria);
+  cv::cornerSubPix(image, corners, {kWinSize, kWinSize}, {-1, -1}, term_criteria);
   for (int i = 0; i < 4; ++i) {
     quad->corners[i] = {corners[i].x, corners[i].y};
   }
@@ -529,23 +530,21 @@ T GetMatMedian(const cv::Mat &mat) {
       vals.push_back(mat.at<T>(y, x));
     }
   }
-  std::partial_sort(vals.begin(), vals.begin() + vals.size() / 2, vals.end());
+  std::nth_element(vals.begin(), vals.begin() + (vals.size() / 2), vals.end());
   return vals[vals.size() / 2];
 }
 
 // TODO::rename function
 Eigen::MatrixXd DecodeTag(const cv::Mat &tag_img, const int width, const int height,
                           const int border, const int intensity_thresh) {
-  const int total_width = width + border;
-  const int total_height = height + border;
-  const int cell_width = tag_img.cols / total_width;
-  const int cell_height = tag_img.rows / total_height;
-  Eigen::MatrixXd tag_matrix(total_height, total_width);  // TODO:: double check constructor order
-  for (int i = 0; i < total_width; ++i) {
-    for (int j = 0; j < total_height; ++j) {
+  const int cell_width = tag_img.cols / width;
+  const int cell_height = tag_img.rows / height;
+  Eigen::MatrixXd tag_matrix(height, width);  // TODO:: double check constructor order
+  for (int i = 0; i < width; ++i) {
+    for (int j = 0; j < height; ++j) {
       cv::Rect roi(i * cell_width, j * cell_height, cell_width, cell_height);
       cv::Mat cell(tag_img, roi);
-      const auto cell_val = GetMatMedian<uchar>(cell);
+      const int cell_val = GetMatMedian<uchar>(cell);
       tag_matrix(j, i) = cell_val > intensity_thresh;
     }
   }
@@ -553,27 +552,33 @@ Eigen::MatrixXd DecodeTag(const cv::Mat &tag_img, const int width, const int hei
 }
 
 int DecodeQuad(const cv::Mat &img, const Quad &quad) {
+  constexpr int tag_width = 8;
+  constexpr int tag_height = 8;
   std::vector<cv::Point2d> corner_pts;
   corner_pts.reserve(4);
   for (const auto &corner : quad.corners) {  // TODO:: range based/transform
     corner_pts.push_back({corner.x(), corner.y()});
   }
-  std::vector<cv::Point2d> rectified_pts{{0, 0}, {0, 100}, {100, 100}, {100, 0}};
+  const int rectified_size_x = tag_width * 8;
+  const int rectified_size_y = tag_width * 8;
+  std::vector<cv::Point2d> rectified_pts{
+      {0, 0}, {0, rectified_size_y}, {rectified_size_x, rectified_size_y}, {rectified_size_x, 0}};
   const auto H = cv::findHomography(corner_pts, rectified_pts);
   cv::Mat tag_rectified;
-  cv::warpPerspective(img, tag_rectified, H, {100, 100});
-  // std::cout << "Quad " << quad_counter << std::endl;
-  // cv::imwrite("quad_" + std::to_string(quad_counter++) + ".png", tag_rectified);
-  const auto tag_matrix = DecodeTag(tag_rectified, 6, 6, 1, 128);
-  // std::cout << "Quad matrix: " << std::endl << tag_matrix << std::endl;
+  cv::warpPerspective(img, tag_rectified, H, {rectified_size_x, rectified_size_y});
+  std::cout << "Quad " << quad_counter << std::endl;
+  cv::imwrite("quad_" + std::to_string(quad_counter++) + ".png", tag_rectified);
+  const auto tag_matrix = DecodeTag(tag_rectified, tag_width, tag_height, 1, 110);
+  std::cout << "Quad matrix: " << std::endl << tag_matrix << std::endl;
   return -1;
 }
 
 std::vector<int> DecodeQuads(const cv::Mat &img, const std::vector<Quad> &quads) {
   std::vector<int> quad_values;
   quad_values.reserve(quads.size());
-  for (const auto &quad : quads) {
-    quad_values.push_back(DecodeQuad(img, quad));
+  DecodeQuad(img, quads.front());
+   for (const auto &quad : quads) {
+   quad_values.push_back(DecodeQuad(img, quad));
   }
   return quad_values;
 }
@@ -581,7 +586,7 @@ std::vector<int> DecodeQuads(const cv::Mat &img, const std::vector<Quad> &quads)
 void RunDetection(const cv::Mat &mat) {
   time_logger::TimeLogger timer;
   time_logger::TimeLogger full_timer;
-  const bool debug = false;
+  const bool debug = true;
   cv::Mat bw_mat;
   cv::cvtColor(mat, bw_mat, cv::COLOR_BGR2GRAY);
   timer.logEvent("01_convert color");
@@ -611,7 +616,7 @@ void RunDetection(const cv::Mat &mat) {
     cv::imwrite("05_lines.png", VisualizeLines(mat, lines));
   }
 
-  constexpr double kMaxInterLineDistance = 8;
+  constexpr double kMaxInterLineDistance = 4;
   const auto line_connectivity = MakeLineConnectivity(lines, kMaxInterLineDistance);
   timer.logEvent("05_Make line connectivity");
   if (debug) {
@@ -622,23 +627,28 @@ void RunDetection(const cv::Mat &mat) {
 
   auto quads = FindQuads(lines, line_connectivity, kMinLineLength);
   timer.logEvent("06_Find quads");
-  // for (auto &quad : quads) {
-  //  RefineEdges(mat, &quad);
-  //}
-  std::cout << "Found " << quads.size() << " quads." << std::endl;
   if (debug) {
     cv::imwrite("07_quads.png", VisualizeQuads(mat, quads));
   }
+  cv::Mat mat_bw;
+  cv::cvtColor(mat, mat_bw, cv::COLOR_BGR2GRAY);
+  for (auto &quad : quads) {
+    RefineEdges(mat_bw, &quad);
+  }
+  std::cout << "Found " << quads.size() << " quads." << std::endl;
+  if (debug) {
+    cv::imwrite("08_quads_refined.png", VisualizeQuads(mat, quads));
+  }
 
-  auto codes = DecodeQuads(mat, quads);
-  timer.logEvent("07_Decode quads");
+  auto codes = DecodeQuads(bw_mat, quads);
+  timer.logEvent("09_Decode quads");
   timer.printLoggedEvents();
   full_timer.logEvent("everything");
   full_timer.printLoggedEvents();
 }
 
 int main() {
-  std::string image_path = "cube_cal_eg.png";
+  std::string image_path = "image.jpeg";
   cv::Mat img = cv::imread(image_path, cv::IMREAD_COLOR);
   if (img.empty()) {
     std::cout << "Could not read the image: " << image_path << std::endl;

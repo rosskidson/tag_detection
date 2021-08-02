@@ -647,6 +647,12 @@ void RunDetection(const cv::Mat &mat) {
   full_timer.printLoggedEvents();
 }
 
+// TODO
+//
+// 1. Use canny instead of sobel for edges extraction for non max suppress. Connect 4 -> 8
+// 2. Fit lines to get line equation. Edges from line intersections
+//
+
 int main() {
   std::string image_path = "image.jpeg";
   cv::Mat img = cv::imread(image_path, cv::IMREAD_COLOR);

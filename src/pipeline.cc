@@ -612,7 +612,7 @@ T GetMatMedian(const cv::Mat &mat) {
 
 // TODO::rename function
 Eigen::MatrixXd DecodeTag(const cv::Mat &tag_img, const int width, const int height,
-                          const int border, const int intensity_thresh) {
+                          const int intensity_thresh) {
   const int cell_width = tag_img.cols / width;
   const int cell_height = tag_img.rows / height;
   Eigen::MatrixXd tag_matrix(height, width);  // TODO:: double check constructor order
@@ -627,34 +627,56 @@ Eigen::MatrixXd DecodeTag(const cv::Mat &tag_img, const int width, const int hei
   return tag_matrix;
 }
 
-int DecodeQuad(const cv::Mat &img, const Quad &quad) {
-  constexpr int tag_width = 8;
-  constexpr int tag_height = 8;
+int DecodeQuad(const cv::Mat &img, const Quad &quad, const int tag_bits, const int border) {
+  const int total_tag_bits = tag_bits + (2 * border);
   std::vector<cv::Point2d> corner_pts;
   corner_pts.reserve(4);
   for (const auto &corner : quad.corners) {  // TODO:: range based/transform
     corner_pts.push_back({corner.x(), corner.y()});
   }
-  const int rectified_size_x = tag_width * 8;
-  const int rectified_size_y = tag_width * 8;
+  const double rectified_size_x = total_tag_bits * 8;
+  const double rectified_size_y = total_tag_bits * 8;
   std::vector<cv::Point2d> rectified_pts{
       {0, 0}, {0, rectified_size_y}, {rectified_size_x, rectified_size_y}, {rectified_size_x, 0}};
   const auto H = cv::findHomography(corner_pts, rectified_pts);
   cv::Mat tag_rectified;
-  cv::warpPerspective(img, tag_rectified, H, {rectified_size_x, rectified_size_y});
+  cv::warpPerspective(img, tag_rectified, H, {int(rectified_size_x), int(rectified_size_y)});
   // std::cout << "Quad " << quad_counter << std::endl;
-  cv::imwrite("quad_" + std::to_string(quad_counter++) + ".png", tag_rectified);
-  const auto tag_matrix = DecodeTag(tag_rectified, tag_width, tag_height, 1, 110);
+  // cv::imwrite("quad_" + std::to_string(quad_counter++) + ".png", tag_rectified);
+
+  constexpr int kMagicThreshold = 110;
+  const auto tag_matrix = DecodeTag(tag_rectified, total_tag_bits, total_tag_bits, kMagicThreshold);
   // std::cout << "Quad matrix: " << std::endl << tag_matrix << std::endl;
-  return -1;
+  int corrupted_border_count{};
+  unsigned int code = 0;
+  int current_bit = (tag_bits * tag_bits);
+  for (int i = 0; i < total_tag_bits; ++i) {
+    for (int j = 0; j < total_tag_bits; ++j) {
+      if (i < border || total_tag_bits - 1 - i < border || j < border ||
+          total_tag_bits - 1 - j < border) {
+        if (tag_matrix(j, i) != 0) {
+          corrupted_border_count++;
+          continue;
+        }
+      } else {  // Not a border pixel
+        if (tag_matrix(j, i) > 0) {
+          code |= 1UL << current_bit;
+        }
+        current_bit--;
+      }
+    }
+  }
+
+  std::cout << "corruption count: " << corrupted_border_count << std::endl;
+  std::cout << "code              " << code << std::endl;
+  return code;
 }
 
 std::vector<int> DecodeQuads(const cv::Mat &img, const std::vector<Quad> &quads) {
   std::vector<int> quad_values;
   quad_values.reserve(quads.size());
-  DecodeQuad(img, quads.front());
   for (const auto &quad : quads) {
-    quad_values.push_back(DecodeQuad(img, quad));
+    quad_values.push_back(DecodeQuad(img, quad, 6, 1));
   }
   return quad_values;
 }

@@ -1,4 +1,5 @@
 #include <Eigen/Core>
+#include <bitset>
 #include <deque>
 #include <iostream>
 #include <map>
@@ -8,6 +9,7 @@
 #include <set>
 #include <unordered_set>
 
+#include "tag_detection/Tag36h9.h"
 #include "tag_detection/timer.h"
 
 double rad2deg(double rad) {
@@ -55,7 +57,6 @@ cv::Mat VisualizeGradientDirections(const ImageGradients &gradients) {
   }
   std::sort(vals.begin(), vals.end());
   const auto max_gradient = vals[vals.size() * 0.8];
-  std::cout << " max grad " << max_gradient << std::endl;
 
   cv::Mat grad_dir_viz(gradients.abs.rows, gradients.abs.cols, CV_8UC3, cv::Scalar::all(0));
   for (int y = 0; y < gradients.direction.rows; ++y) {
@@ -413,13 +414,33 @@ cv::Mat VisualizeLineConnectivity(const cv::Mat &img, const std::vector<Line> &l
   return viz_lines;
 }
 
-struct Quad {
+// Four corners describing a tag boundaries in image space.
+struct RawQuad {
   std::array<Eigen::Vector2d, 4> corners{};
 };
 
+// Quad with the bits stored as a binary matrix.
+struct UndecodedQuad {
+  std::array<Eigen::Vector2d, 4> corners{};
+  Eigen::MatrixXd bits{};
+};
+
+// Quad with the bits encoded into a number.
+struct DecodedQuad {
+  std::array<Eigen::Vector2d, 4> corners{};
+  unsigned long int code{};
+};
+
+// A tag with a proper tag id from a tag family.
+struct Tag {
+  std::array<Eigen::Vector2d, 4> corners{};
+  int tag_id{};
+  int rotation{};
+};
+
 // TODO:: Missing:: subpix refine
-Quad CreateQuad(const std::vector<int> &quad_line_ids, const std::vector<Line> &lines) {
-  Quad quad{};
+RawQuad CreateQuad(const std::vector<int> &quad_line_ids, const std::vector<Line> &lines) {
+  RawQuad quad{};
   for (int i = 0; i < 4; ++i) {
     auto line_ends =
         GetConnectedLineEnds(lines[quad_line_ids[i]], lines[quad_line_ids[(i + 1) % 4]]);
@@ -529,7 +550,7 @@ std::vector<std::vector<int>> FindQuadsFromStartLine(
   return quads;
 }
 
-bool CheckQuadSideLengths(const Quad &quad, const double side_length) {
+bool CheckQuadSideLengths(const RawQuad &quad, const double side_length) {
   const double side_length_squared = side_length * side_length;
   for (int i = 0; i < 4; ++i) {
     const auto pt_a = quad.corners[i];
@@ -550,7 +571,7 @@ std::vector<cv::Point2f> ToCvPoints(const EigenPointContainer &points) {
   return cv_points;
 }
 
-void RefineEdges(const cv::Mat &image, Quad *quad) {
+void RefineEdges(const cv::Mat &image, RawQuad *quad) {
   constexpr int kWinSize = 2;
   auto corners = ToCvPoints(quad->corners);
   auto term_criteria = cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 40, 0.001);
@@ -560,10 +581,10 @@ void RefineEdges(const cv::Mat &image, Quad *quad) {
   }
 }
 
-std::vector<Quad> FindQuads(const std::vector<Line> &lines,
-                            const std::map<int, std::set<int>> &line_connectivity,
-                            const double min_side_length) {
-  std::vector<Quad> quads;
+std::vector<RawQuad> FindQuads(const std::vector<Line> &lines,
+                               const std::map<int, std::set<int>> &line_connectivity,
+                               const double min_side_length) {
+  std::vector<RawQuad> quads;
   std::set<UniqueQuad> unique_quads;
   for (const auto &[line_id, other_line_ids] : line_connectivity) {
     auto potential_quads =
@@ -581,12 +602,11 @@ std::vector<Quad> FindQuads(const std::vector<Line> &lines,
   return quads;
 }
 
-cv::Mat VisualizeQuads(const cv::Mat &img, const std::vector<Quad> &quads) {
+cv::Mat VisualizeQuads(const cv::Mat &img, const std::vector<RawQuad> &quads) {
   cv::Mat viz = img.clone();
   int quad_counter{};
   for (const auto &quad : quads) {
     for (int i = 0; i < 4; ++i) {
-      // std::cout << "  " << quad.corners[i].x() << ", " << quad.corners[i].y() << std::endl;
       const auto pt_a = quad.corners[i].cast<int>();
       const auto pt_b = quad.corners[(i + 1) % 4].cast<int>();
       cv::line(viz, {pt_a.x(), pt_a.y()}, {pt_b.x(), pt_b.y()}, {0, 255, 0}, 1);
@@ -610,9 +630,9 @@ T GetMatMedian(const cv::Mat &mat) {
   return vals[vals.size() / 2];
 }
 
-// TODO::rename function
-Eigen::MatrixXd DecodeTag(const cv::Mat &tag_img, const int width, const int height,
-                          const int intensity_thresh) {
+Eigen::MatrixXd ThresholdQuadBits(const cv::Mat &tag_img, const int width, const int height,
+                                  const int intensity_thresh,
+                                  const std::optional<std::string> &debug_filename = std::nullopt) {
   const int cell_width = tag_img.cols / width;
   const int cell_height = tag_img.rows / height;
   Eigen::MatrixXd tag_matrix(height, width);  // TODO:: double check constructor order
@@ -624,10 +644,23 @@ Eigen::MatrixXd DecodeTag(const cv::Mat &tag_img, const int width, const int hei
       tag_matrix(j, i) = cell_val > intensity_thresh;
     }
   }
+  if (debug_filename.has_value()) {
+    cv::Mat debug_img = tag_img.clone();
+    for (int i = 0; i < width; ++i) {
+      cv::line(debug_img, cv::Point2i{(i * width), 0}, cv::Point2i{(i * width), tag_img.rows},
+               cv::Scalar(128));
+    }
+    for (int j = 0; j < height; ++j) {
+      cv::line(debug_img, cv::Point2i{0, (j * height)}, cv::Point2i{tag_img.cols, (j * height)},
+               cv::Scalar(128));
+    }
+    cv::imwrite(debug_filename.value(), debug_img);
+  }
   return tag_matrix;
 }
 
-int DecodeQuad(const cv::Mat &img, const Quad &quad, const int tag_bits, const int border) {
+UndecodedQuad ReadQuadData(const cv::Mat &img, const RawQuad &quad, const int tag_bits,
+                           const int border) {
   const int total_tag_bits = tag_bits + (2 * border);
   std::vector<cv::Point2d> corner_pts;
   corner_pts.reserve(4);
@@ -641,50 +674,165 @@ int DecodeQuad(const cv::Mat &img, const Quad &quad, const int tag_bits, const i
   const auto H = cv::findHomography(corner_pts, rectified_pts);
   cv::Mat tag_rectified;
   cv::warpPerspective(img, tag_rectified, H, {int(rectified_size_x), int(rectified_size_y)});
-  // std::cout << "Quad " << quad_counter << std::endl;
-  // cv::imwrite("quad_" + std::to_string(quad_counter++) + ".png", tag_rectified);
 
-  constexpr int kMagicThreshold = 110;
-  const auto tag_matrix = DecodeTag(tag_rectified, total_tag_bits, total_tag_bits, kMagicThreshold);
-  // std::cout << "Quad matrix: " << std::endl << tag_matrix << std::endl;
+  cv::Mat tag_rectified_norm;
+  cv::normalize(tag_rectified, tag_rectified_norm, 255, 0, cv::NORM_MINMAX);
+
+  const auto debug_filename = "quad_" + std::to_string(quad_counter++) + ".png";
+  constexpr int kMagicThreshold = 128;
+  const auto tag_matrix = ThresholdQuadBits(tag_rectified_norm, total_tag_bits, total_tag_bits,
+                                            kMagicThreshold, debug_filename);
+  return {quad.corners, tag_matrix};
+}
+
+std::vector<UndecodedQuad> ReadQuads(const cv::Mat &img, const std::vector<RawQuad> &quads) {
+  std::vector<UndecodedQuad> quad_values;
+  quad_values.reserve(quads.size());
+  for (const auto &quad : quads) {
+    quad_values.push_back(ReadQuadData(img, quad, 6, 1));
+  }
+  return quad_values;
+}
+
+unsigned long int DecodeQuad(const UndecodedQuad &quad, const int tag_bits, const int border) {
+  const int total_tag_bits = tag_bits + (2 * border);
+  std::cout << "Quad matrix: " << std::endl << quad.bits << std::endl;
   int corrupted_border_count{};
-  unsigned int code = 0;
-  int current_bit = (tag_bits * tag_bits);
-  for (int i = 0; i < total_tag_bits; ++i) {
-    for (int j = 0; j < total_tag_bits; ++j) {
+  unsigned long int code = 0;
+  int current_bit = (tag_bits * tag_bits) - 1;
+  for (int j = 0; j < total_tag_bits; ++j) {
+    for (int i = 0; i < total_tag_bits; ++i) {
+      // Check if it is a border bit.
       if (i < border || total_tag_bits - 1 - i < border || j < border ||
           total_tag_bits - 1 - j < border) {
-        if (tag_matrix(j, i) != 0) {
+        if (quad.bits(j, i) != 0) {
           corrupted_border_count++;
           continue;
         }
-      } else {  // Not a border pixel
-        if (tag_matrix(j, i) > 0) {
+      } else {  // Not a border bit.
+        if (quad.bits(j, i) > 0) {
           code |= 1UL << current_bit;
         }
         current_bit--;
       }
     }
   }
-
-  std::cout << "corruption count: " << corrupted_border_count << std::endl;
-  std::cout << "code              " << code << std::endl;
   return code;
 }
 
-std::vector<int> DecodeQuads(const cv::Mat &img, const std::vector<Quad> &quads) {
-  std::vector<int> quad_values;
-  quad_values.reserve(quads.size());
+std::vector<DecodedQuad> DecodeQuads(const std::vector<UndecodedQuad> &quads) {
+  std::vector<DecodedQuad> decoded_quads;
+  decoded_quads.reserve(quads.size());
+  int i{};
   for (const auto &quad : quads) {
-    quad_values.push_back(DecodeQuad(img, quad, 6, 1));
+    std::cout << "quad id " << i++ << std::endl;
+    decoded_quads.push_back({quad.corners, DecodeQuad(quad, 6, 1)});
+    std::cout << "quad code " << std::dec << decoded_quads.back().code << std::endl;
+    std::cout << "hex       " << std::hex << decoded_quads.back().code << std::endl;
+    std::cout << "bin       " << std::bitset<36>(decoded_quads.back().code) << std::endl;
+    std::cout << std::dec;
   }
-  return quad_values;
+  return decoded_quads;
+}
+
+std::vector<unsigned long long int> FindRotations(const unsigned long long int non_rotated_code,
+                                                  const int width, const int height) {
+  std::vector<unsigned long long int> rotated_codes;
+  rotated_codes.push_back(non_rotated_code);
+  // Represent the code as a matrix.
+  Eigen::MatrixXd tag_matrix(height, width);
+  auto code = non_rotated_code;
+  for (int j = height - 1; j >= 0; --j) {
+    for (int i = width - 1; i >= 0; --i) {
+      tag_matrix(j, i) = code & 1;
+      code >>= 1;
+    }
+  }
+
+  // Read different rotations by iterating different ways.
+  {
+    unsigned long long int code = 0;
+    int current_bit = (width * height) - 1;
+    for (int i = width - 1; i >= 0; --i) {
+      for (int j = 0; j < height; ++j) {
+        if (tag_matrix(j, i) > 0) {
+          code |= 1UL << current_bit;
+        }
+        current_bit--;
+      }
+    }
+    rotated_codes.push_back(code);
+  }
+
+  {
+    unsigned long long int code = 0;
+    int current_bit = (width * height) - 1;
+    for (int j = height - 1; j >= 0; --j) {
+      for (int i = width - 1; i >= 0; --i) {
+        if (tag_matrix(j, i) > 0) {
+          code |= 1UL << current_bit;
+        }
+        current_bit--;
+      }
+    }
+    rotated_codes.push_back(code);
+  }
+
+  {
+    unsigned long long int code = 0;
+    int current_bit = (width * height) - 1;
+    for (int i = 0; i < width; ++i) {
+      for (int j = height - 1; j >= 0; --j) {
+        if (tag_matrix(j, i) > 0) {
+          code |= 1UL << current_bit;
+        }
+        current_bit--;
+      }
+    }
+    rotated_codes.push_back(code);
+  }
+  return rotated_codes;
+}
+
+struct RotatedId {
+  int id{};
+  int rotation{};
+};
+
+std::vector<Tag> MatchDecodedQuads(const std::vector<DecodedQuad> &quads) {
+  std::vector<Tag> detected_tags;
+  detected_tags.reserve(quads.size());
+
+  std::unordered_map<unsigned long long, RotatedId> family_codes{};
+  std::unordered_map<unsigned long long, unsigned long long int> rotation_to_orig{};
+  for (int id = 0; id < AprilTags::t36h9_size; ++id) {
+    auto rotations = FindRotations(AprilTags::t36h9[id], 6, 6);
+    for (int r = 0; r < rotations.size(); ++r) {
+      family_codes.insert({rotations[r], {id, r}});
+      rotation_to_orig[rotations[r]] = rotations[0];
+    }
+  }
+  std::cout << "Num codes " << family_codes.size() << std::endl;
+
+  int i{};
+  for (const auto &quad : quads) {
+    if (family_codes.count(quad.code)) {
+      const auto &rotated_id = family_codes[quad.code];
+      std::cout << "Found Match! quad id " << i << " quad code " << std::hex << quad.code
+                << std::dec << " tag id " << rotated_id.id << " rotation " << rotated_id.rotation
+                << " non rotated code " << std::hex << rotation_to_orig[quad.code] << std::dec
+                << std::endl;
+      detected_tags.push_back({quad.corners, rotated_id.id, rotated_id.rotation});
+    }
+    i++;
+  }
+  return detected_tags;
 }
 
 void RunDetection(const cv::Mat &mat) {
   time_logger::TimeLogger timer;
   time_logger::TimeLogger full_timer;
-  const bool debug = true;
+  const bool debug = false;
   cv::Mat bw_mat;
   cv::cvtColor(mat, bw_mat, cv::COLOR_BGR2GRAY);
   timer.logEvent("01_convert color");
@@ -703,7 +851,7 @@ void RunDetection(const cv::Mat &mat) {
   const auto lines_points = ClusterGradientDirections(img_gradients, non_max_pts,
                                                       kMaxAngleClusterDiff, kMinLineClusterSize);
   timer.logEvent("04_Cluster gradients");
-  std::cout << lines_points.size() << " clusters found." << std::endl;
+  // std::cout << lines_points.size() << " clusters found." << std::endl;
   if (debug) {
     cv::imwrite("03_gradient_thresh.png",
                 GetThresholdedGradient(img_gradients, kAbsImgGradientThresh));
@@ -718,7 +866,7 @@ void RunDetection(const cv::Mat &mat) {
     cv::imwrite("05_lines.png", VisualizeLines(mat, lines));
   }
 
-  constexpr double kMaxInterLineDistance = 4;
+  constexpr double kMaxInterLineDistance = 5;
   const auto line_connectivity = MakeLineConnectivity(lines, kMaxInterLineDistance);
   timer.logEvent("06_Make line connectivity");
   if (debug) {
@@ -742,8 +890,26 @@ void RunDetection(const cv::Mat &mat) {
     cv::imwrite("08_quads_refined.png", VisualizeQuads(mat, quads));
   }
 
-  auto codes = DecodeQuads(bw_mat, quads);
-  timer.logEvent("09_Decode quads");
+  const auto undecoded_quads = ReadQuads(bw_mat, quads);
+  timer.logEvent("08_read quads");
+
+  const auto decoded_quads = DecodeQuads(undecoded_quads);
+  timer.logEvent("09_decode quads");
+
+  const auto detected_tags = MatchDecodedQuads(decoded_quads);
+  timer.logEvent("10_lookup tag ids");
+
+  if (debug) {
+    auto labeled_tags = mat.clone();
+    for (const auto tag : detected_tags) {
+      const auto tag_loc = tag.corners.front();
+      cv::putText(labeled_tags, std::to_string(tag.tag_id),
+                  cv::Point2i{int(tag_loc.x()), int(tag_loc.y())}, cv::FONT_HERSHEY_PLAIN, 0.8,
+                  cv::Scalar(0, 255, 0), 1);
+    }
+    cv::imwrite("09_labelled_tags.png", labeled_tags);
+  }
+
   timer.printLoggedEvents();
   full_timer.logEvent("everything");
   full_timer.printLoggedEvents();

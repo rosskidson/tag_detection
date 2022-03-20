@@ -602,13 +602,14 @@ std::vector<RawQuad> FindQuads(const std::vector<Line> &lines,
   return quads;
 }
 
-cv::Mat VisualizeQuads(const cv::Mat &img, const std::vector<RawQuad> &quads) {
+template <typename Quad>
+cv::Mat VisualizeQuads(const cv::Mat &img, const std::vector<Quad> &quads) {
   cv::Mat viz = img.clone();
   int quad_counter{};
   for (const auto &quad : quads) {
     for (int i = 0; i < 4; ++i) {
-      const auto pt_a = quad.corners[i].cast<int>();
-      const auto pt_b = quad.corners[(i + 1) % 4].cast<int>();
+      const auto pt_a = quad.corners[i].template cast<int>();
+      const auto pt_b = quad.corners[(i + 1) % 4].template cast<int>();
       cv::line(viz, {pt_a.x(), pt_a.y()}, {pt_b.x(), pt_b.y()}, {0, 255, 0}, 1);
     }
   }
@@ -660,7 +661,7 @@ Eigen::MatrixXd ThresholdQuadBits(const cv::Mat &tag_img, const int width, const
 }
 
 UndecodedQuad ReadQuadData(const cv::Mat &img, const RawQuad &quad, const int tag_bits,
-                           const int border) {
+                           const int border, const bool debug) {
   const int total_tag_bits = tag_bits + (2 * border);
   std::vector<cv::Point2d> corner_pts;
   corner_pts.reserve(4);
@@ -675,21 +676,27 @@ UndecodedQuad ReadQuadData(const cv::Mat &img, const RawQuad &quad, const int ta
   cv::Mat tag_rectified;
   cv::warpPerspective(img, tag_rectified, H, {int(rectified_size_x), int(rectified_size_y)});
 
+  // TODO do this inside threshold, remove the param and use the tag_rectified_norm also as the
+  // debug mat to save another copy.
   cv::Mat tag_rectified_norm;
   cv::normalize(tag_rectified, tag_rectified_norm, 255, 0, cv::NORM_MINMAX);
 
-  const auto debug_filename = "quad_" + std::to_string(quad_counter++) + ".png";
+  std::optional<std::string> debug_filename{std::nullopt};
+  if (debug) {
+    debug_filename = "quad_" + std::to_string(quad_counter++) + ".png";
+  }
   constexpr int kMagicThreshold = 128;
   const auto tag_matrix = ThresholdQuadBits(tag_rectified_norm, total_tag_bits, total_tag_bits,
                                             kMagicThreshold, debug_filename);
   return {quad.corners, tag_matrix};
 }
 
-std::vector<UndecodedQuad> ReadQuads(const cv::Mat &img, const std::vector<RawQuad> &quads) {
+std::vector<UndecodedQuad> ReadQuads(const cv::Mat &img, const std::vector<RawQuad> &quads,
+                                     const bool debug) {
   std::vector<UndecodedQuad> quad_values;
   quad_values.reserve(quads.size());
   for (const auto &quad : quads) {
-    quad_values.push_back(ReadQuadData(img, quad, 6, 1));
+    quad_values.push_back(ReadQuadData(img, quad, 6, 1, debug));
   }
   return quad_values;
 }
@@ -832,7 +839,7 @@ std::vector<Tag> MatchDecodedQuads(const std::vector<DecodedQuad> &quads) {
 void RunDetection(const cv::Mat &mat) {
   time_logger::TimeLogger timer;
   time_logger::TimeLogger full_timer;
-  const bool debug = false;
+  const bool debug = true;
   cv::Mat bw_mat;
   cv::cvtColor(mat, bw_mat, cv::COLOR_BGR2GRAY);
   timer.logEvent("01_convert color");
@@ -890,7 +897,7 @@ void RunDetection(const cv::Mat &mat) {
     cv::imwrite("08_quads_refined.png", VisualizeQuads(mat, quads));
   }
 
-  const auto undecoded_quads = ReadQuads(bw_mat, quads);
+  const auto undecoded_quads = ReadQuads(bw_mat, quads, debug);
   timer.logEvent("08_read quads");
 
   const auto decoded_quads = DecodeQuads(undecoded_quads);
@@ -900,7 +907,7 @@ void RunDetection(const cv::Mat &mat) {
   timer.logEvent("10_lookup tag ids");
 
   if (debug) {
-    auto labeled_tags = mat.clone();
+    auto labeled_tags = VisualizeQuads(mat, detected_tags);
     for (const auto tag : detected_tags) {
       const auto tag_loc = tag.corners.front();
       cv::putText(labeled_tags, std::to_string(tag.tag_id),

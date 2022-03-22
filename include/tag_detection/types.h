@@ -11,13 +11,13 @@ struct RawQuad {
 };
 
 // Quad with the bits stored as a binary matrix.
-struct UndecodedQuad {
+struct QuadWithBits {
   std::array<Eigen::Vector2d, 4> corners{};
   Eigen::MatrixXd bits{};
 };
 
 // Quad with the bits encoded into a number.
-struct DecodedQuad {
+struct QuadWithCode {
   std::array<Eigen::Vector2d, 4> corners{};
   unsigned long int code{};
 };

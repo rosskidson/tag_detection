@@ -431,11 +431,11 @@ struct DecodedQuad {
   unsigned long int code{};
 };
 
-// A tag with a proper tag id from a tag family.
+// A tag with a proper tag id from a tag family. Corners rotated according to tag orientation.
+// First corner bottom right then rotate around anti clockwise.
 struct Tag {
   std::array<Eigen::Vector2d, 4> corners{};
   int tag_id{};
-  int rotation{};
 };
 
 // TODO:: Missing:: subpix refine
@@ -467,19 +467,27 @@ RawQuad CreateQuad(const std::vector<int> &quad_line_ids, const std::vector<Line
     auto &corner_with_angle = corners.emplace_back();
     corner_with_angle.corner = corner;
     auto &angle = corner_with_angle.angle;
-    angle = std::atan2(centroid.y() - corner.y(), centroid.x() - corner.x());
+    angle = std::atan2(corner.y() - centroid.y(), corner.x() - centroid.x());
     if (angle < 0) {
       angle += 2 * M_PI;
     }
   }
 
-  // Sort the points by angle, descending to get them in clockwise order.
+  // Sort the points by angle, descending to get them in clockwise order. This results in
+  // anti-clockwise when viewing the image with on a screen, where the y axis is inverted. The first
+  // point will be in the top right quadrant.
   std::sort(corners.begin(), corners.end(), [](const auto &corner_1, const auto &corner_2) {
     return corner_1.angle > corner_2.angle;
   });
 
+  // After sorting, we want the first corner to be in the bottom right quadrant, to be consistent
+  // with the output convention that the first corner is bottom right, then rotate around
+  // anti-clockwise. So move all corners around by two.
+  // If the tag needs rotating because it is not oriented upright in the image frame, this will
+  // happen later after decoding the tag and determining its orientation.
+
   for (int i = 0; i < 4; ++i) {
-    quad.corners[i] = corners[i].corner;
+    quad.corners[i] = corners[(i + 2) % 4].corner;
   }
 
   return quad;
@@ -611,6 +619,9 @@ cv::Mat VisualizeQuads(const cv::Mat &img, const std::vector<Quad> &quads) {
       const auto pt_a = quad.corners[i].template cast<int>();
       const auto pt_b = quad.corners[(i + 1) % 4].template cast<int>();
       cv::line(viz, {pt_a.x(), pt_a.y()}, {pt_b.x(), pt_b.y()}, {0, 255, 0}, 1);
+      const auto tag_loc = quad.corners[i];
+      cv::putText(viz, std::to_string(i), cv::Point2i{int(tag_loc.x()), int(tag_loc.y())},
+                  cv::FONT_HERSHEY_PLAIN, 0.6, cv::Scalar(0, 255, 0), 1);
     }
   }
   return viz;
@@ -670,8 +681,14 @@ UndecodedQuad ReadQuadData(const cv::Mat &img, const RawQuad &quad, const int ta
   }
   const double rectified_size_x = total_tag_bits * 8;
   const double rectified_size_y = total_tag_bits * 8;
+  // Points are ordered with the first point in the bottom left, then rotate around clockwise. Note
+  // that this is in image coordinates, so bottom right is x = 0, y = 1.
   std::vector<cv::Point2d> rectified_pts{
-      {0, 0}, {0, rectified_size_y}, {rectified_size_x, rectified_size_y}, {rectified_size_x, 0}};
+      //{0, 0}, {rectified_size_x, 0}, {rectified_size_x, rectified_size_y}, {0, rectified_size_y}};
+      {0, rectified_size_y},
+      {rectified_size_x, rectified_size_y},
+      {rectified_size_x, 0},
+      {0, 0}};
   const auto H = cv::findHomography(corner_pts, rectified_pts);
   cv::Mat tag_rectified;
   cv::warpPerspective(img, tag_rectified, H, {int(rectified_size_x), int(rectified_size_y)});
@@ -742,10 +759,9 @@ std::vector<DecodedQuad> DecodeQuads(const std::vector<UndecodedQuad> &quads) {
   return decoded_quads;
 }
 
-std::vector<unsigned long long int> FindRotations(const unsigned long long int non_rotated_code,
-                                                  const int width, const int height) {
+std::vector<unsigned long long int> GenerateRotations(const unsigned long long int non_rotated_code,
+                                                      const int width, const int height) {
   std::vector<unsigned long long int> rotated_codes;
-  rotated_codes.push_back(non_rotated_code);
   // Represent the code as a matrix.
   Eigen::MatrixXd tag_matrix(height, width);
   auto code = non_rotated_code;
@@ -756,12 +772,15 @@ std::vector<unsigned long long int> FindRotations(const unsigned long long int n
     }
   }
 
-  // Read different rotations by iterating different ways.
+  // No rotation.
+  rotated_codes.push_back(non_rotated_code);
+
+  // 1 90 degree anti-clockwise rotation of the original tag.
   {
     unsigned long long int code = 0;
     int current_bit = (width * height) - 1;
-    for (int i = width - 1; i >= 0; --i) {
-      for (int j = 0; j < height; ++j) {
+    for (int i = 0; i < width; ++i) {
+      for (int j = height - 1; j >= 0; --j) {
         if (tag_matrix(j, i) > 0) {
           code |= 1UL << current_bit;
         }
@@ -771,6 +790,7 @@ std::vector<unsigned long long int> FindRotations(const unsigned long long int n
     rotated_codes.push_back(code);
   }
 
+  // 2 90 degree anti-clockwise rotations of the original tag.
   {
     unsigned long long int code = 0;
     int current_bit = (width * height) - 1;
@@ -785,11 +805,12 @@ std::vector<unsigned long long int> FindRotations(const unsigned long long int n
     rotated_codes.push_back(code);
   }
 
+  // 3 90 degree anti-clockwise rotations of the original tag.
   {
     unsigned long long int code = 0;
     int current_bit = (width * height) - 1;
-    for (int i = 0; i < width; ++i) {
-      for (int j = height - 1; j >= 0; --j) {
+    for (int i = width - 1; i >= 0; --i) {
+      for (int j = 0; j < height; ++j) {
         if (tag_matrix(j, i) > 0) {
           code |= 1UL << current_bit;
         }
@@ -798,7 +819,19 @@ std::vector<unsigned long long int> FindRotations(const unsigned long long int n
     }
     rotated_codes.push_back(code);
   }
+
   return rotated_codes;
+}
+
+// Rotates the corners of the quad around by an integer number of clockwise rotations.
+std::array<Eigen::Vector2d, 4> RotateQuad(const std::array<Eigen::Vector2d, 4> &quad,
+                                          const int rotation) {
+  std::array<Eigen::Vector2d, 4> rotated_quad{};
+  for (int i = 0; i < 4; ++i) {
+    const int rotated_index = (i + rotation) % 4;
+    rotated_quad[rotated_index] = quad[i];
+  }
+  return rotated_quad;
 }
 
 struct RotatedId {
@@ -811,12 +844,10 @@ std::vector<Tag> MatchDecodedQuads(const std::vector<DecodedQuad> &quads) {
   detected_tags.reserve(quads.size());
 
   std::unordered_map<unsigned long long, RotatedId> family_codes{};
-  std::unordered_map<unsigned long long, unsigned long long int> rotation_to_orig{};
   for (int id = 0; id < AprilTags::t36h9_size; ++id) {
-    auto rotations = FindRotations(AprilTags::t36h9[id], 6, 6);
+    const auto rotations = GenerateRotations(AprilTags::t36h9[id], 6, 6);
     for (int r = 0; r < rotations.size(); ++r) {
       family_codes.insert({rotations[r], {id, r}});
-      rotation_to_orig[rotations[r]] = rotations[0];
     }
   }
   std::cout << "Num codes " << family_codes.size() << std::endl;
@@ -827,9 +858,8 @@ std::vector<Tag> MatchDecodedQuads(const std::vector<DecodedQuad> &quads) {
       const auto &rotated_id = family_codes[quad.code];
       std::cout << "Found Match! quad id " << i << " quad code " << std::hex << quad.code
                 << std::dec << " tag id " << rotated_id.id << " rotation " << rotated_id.rotation
-                << " non rotated code " << std::hex << rotation_to_orig[quad.code] << std::dec
-                << std::endl;
-      detected_tags.push_back({quad.corners, rotated_id.id, rotated_id.rotation});
+                << " non rotated code " << std::endl;
+      detected_tags.push_back({RotateQuad(quad.corners, rotated_id.rotation), rotated_id.id});
     }
     i++;
   }
@@ -907,12 +937,21 @@ void RunDetection(const cv::Mat &mat) {
   timer.logEvent("10_lookup tag ids");
 
   if (debug) {
+    constexpr bool kShowCornerIndices = false;
     auto labeled_tags = VisualizeQuads(mat, detected_tags);
     for (const auto tag : detected_tags) {
-      const auto tag_loc = tag.corners.front();
+      const auto corner_0 = tag.corners.front();
       cv::putText(labeled_tags, std::to_string(tag.tag_id),
-                  cv::Point2i{int(tag_loc.x()), int(tag_loc.y())}, cv::FONT_HERSHEY_PLAIN, 0.8,
+                  cv::Point2i{int(corner_0.x()), int(corner_0.y())}, cv::FONT_HERSHEY_PLAIN, 0.8,
                   cv::Scalar(0, 255, 0), 1);
+      if constexpr (kShowCornerIndices) {
+        for (int i = 0; i < 4; ++i) {
+          const auto tag_loc = tag.corners[i];
+          cv::putText(labeled_tags, std::to_string(i),
+                      cv::Point2i{int(tag_loc.x()), int(tag_loc.y())}, cv::FONT_HERSHEY_PLAIN, 0.6,
+                      cv::Scalar(0, 255, 0), 1);
+        }
+      }
     }
     cv::imwrite("09_labelled_tags.png", labeled_tags);
   }

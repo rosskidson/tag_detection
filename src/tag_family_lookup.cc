@@ -4,6 +4,12 @@
 #include <unordered_map>
 #include <vector>
 
+#include "tag_detection/internal/tag16h5.h"
+#include "tag_detection/internal/tag25h7.h"
+#include "tag_detection/internal/tag25h9.h"
+#include "tag_detection/internal/tag36h11.h"
+#include "tag_detection/internal/tag36h9.h"
+
 namespace tag_detection {
 
 std::vector<unsigned long long int> GenerateRotations(const unsigned long long int non_rotated_code,
@@ -69,6 +75,41 @@ std::vector<unsigned long long int> GenerateRotations(const unsigned long long i
 
   return rotated_codes;
 }
+
+int GetFamilySize(const TagFamily& family) {
+  switch (family) {
+    case TagFamily::Tag16h5:
+      return 4;
+    case TagFamily::Tag25h7:
+      return 5;
+    case TagFamily::Tag25h9:
+      return 5;
+    case TagFamily::Tag36h9:
+      return 6;
+    case TagFamily::Tag36h11:
+      return 6;
+  }
+  return {};
+}
+
+std::vector<unsigned long long> GetFamilyCodes(const TagFamily& family) {
+  switch (family) {
+    case TagFamily::Tag16h5:
+      return t16h5;
+    case TagFamily::Tag25h7:
+      return t25h7;
+    case TagFamily::Tag25h9:
+      return t25h9;
+    case TagFamily::Tag36h9:
+      return t36h9;
+    case TagFamily::Tag36h11:
+      return t36h11;
+  }
+  return {};
+}
+
+TagFamilyLookup::TagFamilyLookup(const TagFamily& family)
+    : TagFamilyLookup(GetFamilyCodes(family), GetFamilySize(family)) {}
 
 TagFamilyLookup::TagFamilyLookup(const std::vector<unsigned long long>& family,
                                  const int tag_bits) {

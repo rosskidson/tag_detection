@@ -606,8 +606,8 @@ cv::Mat VisualizeQuads(const cv::Mat &img, const std::vector<Quad> &quads) {
       const auto pt_b = quad.corners[(i + 1) % 4].template cast<int>();
       cv::line(viz, {pt_a.x(), pt_a.y()}, {pt_b.x(), pt_b.y()}, {0, 255, 0}, 1);
       const auto tag_loc = quad.corners[i];
-      cv::putText(viz, std::to_string(i), cv::Point2i{int(tag_loc.x()), int(tag_loc.y())},
-                  cv::FONT_HERSHEY_PLAIN, 0.6, cv::Scalar(0, 255, 0), 1);
+      // cv::putText(viz, std::to_string(i), cv::Point2i{int(tag_loc.x()), int(tag_loc.y())},
+      //            cv::FONT_HERSHEY_PLAIN, 0.6, cv::Scalar(0, 255, 0), 1);
     }
   }
   return viz;
@@ -706,7 +706,7 @@ std::vector<UndecodedQuad> ReadQuads(const cv::Mat &img, const std::vector<RawQu
 
 unsigned long int DecodeQuad(const UndecodedQuad &quad, const int tag_bits, const int border) {
   const int total_tag_bits = tag_bits + (2 * border);
-  std::cout << "Quad matrix: " << std::endl << quad.bits << std::endl;
+  // std::cout << "Quad matrix: " << std::endl << quad.bits << std::endl;
   int corrupted_border_count{};
   unsigned long int code = 0;
   int current_bit = (tag_bits * tag_bits) - 1;
@@ -912,7 +912,7 @@ void RunDetection(const cv::Mat &mat) {
   const auto decoded_quads = DecodeQuads(undecoded_quads);
   timer.logEvent("09_decode quads");
 
-  TagFamilyLookup tag_family(tag_detection::t36h9, 6);
+  TagFamilyLookup tag_family(TagFamily::Tag36h9);
   const auto detected_tags = MatchDecodedQuads(decoded_quads, tag_family);
   timer.logEvent("10_lookup tag ids");
 

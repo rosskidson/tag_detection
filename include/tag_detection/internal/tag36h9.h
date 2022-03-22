@@ -4,6 +4,8 @@
 
 namespace tag_detection {
 
+// Tag bits are read like a book; left to right, top to bottom. Most significant bit is top left.
+
 const std::vector<unsigned long long> t36h9 = {
     0x131b29edaLL, 0x16c41a49fLL, 0x1a6d0aa64LL, 0x1e15fb029LL, 0x21beeb5eeLL, 0x2567dbbb3LL,
     0x2910cc178LL, 0x340b9d2c7LL, 0x37b48d88cLL, 0x42af5e9dbLL, 0x4a013f565LL, 0x54fc106b4LL,

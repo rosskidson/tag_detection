@@ -17,6 +17,14 @@ namespace tag_detection {
  *
  *  @return  A vector of tag detections.
  *
+ *  Example usage:
+ *
+ * #include "tag_detection/tag36h9.h"
+ *
+ * TagFamilyLookup tag_family(tag_detection::t36h9, 6);
+ * auto img = cv::imread("image_with_tags.png");
+ * const auto tags = DetectTags(img, tag_family);
+ *
  */
 std::vector<Tag> DetectTags(const cv::Mat& img, const TagFamilyLookup& tag_family,
                             const bool debug = false);

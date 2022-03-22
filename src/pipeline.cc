@@ -9,8 +9,18 @@
 #include <set>
 #include <unordered_set>
 
-#include "tag_detection/Tag36h9.h"
-#include "tag_detection/timer.h"
+#include "tag_detection/internal/tag36h9.h"
+#include "tag_detection/internal/timer.h"
+#include "tag_detection/tag_detection.h"
+#include "tag_detection/tag_family_lookup.h"
+
+namespace Eigen {  // TODO:: Remove?
+bool operator<(const Eigen::Vector2i &a, const Eigen::Vector2i &b) {
+  return a.x() < b.x() || (a.x() == b.x() && a.y() < b.y());
+}
+}  // namespace Eigen
+
+namespace tag_detection {
 
 double rad2deg(double rad) {
   return rad * 180.0 / M_PI;
@@ -97,24 +107,6 @@ ImageGradients CalculateImageGradients(const cv::Mat &mat, const bool debug) {
   return gradients;
 }
 
-// const std::vector<std::vector<Eigen::Vector2i>> gradient_lookup{
-//    {Eigen::Vector2i{-1, 0}, Eigen::Vector2i{1, 0}},   // 0 - 22
-//    {Eigen::Vector2i{-1, -1}, Eigen::Vector2i{1, 1}},  // 22 - 45
-//    {Eigen::Vector2i{-1, -1}, Eigen::Vector2i{1, 1}},  // 45 - 77
-//    {Eigen::Vector2i{0, 1}, Eigen::Vector2i{0, -1}},   // 77 - 90
-//    {Eigen::Vector2i{0, 1}, Eigen::Vector2i{0, -1}},   // 90 - 112
-//    {Eigen::Vector2i{-1, 1}, Eigen::Vector2i{1, -1}},  // 112 - 135
-//    {Eigen::Vector2i{-1, 1}, Eigen::Vector2i{1, -1}},  // 135 - 157
-//    {Eigen::Vector2i{-1, 0}, Eigen::Vector2i{1, 0}},   // 157 - 180
-//    {Eigen::Vector2i{-1, 0}, Eigen::Vector2i{1, 0}},   // 180 - 202
-//    {Eigen::Vector2i{-1, -1}, Eigen::Vector2i{1, 1}},  // 202 - 225
-//    {Eigen::Vector2i{-1, -1}, Eigen::Vector2i{1, 1}},  // 225 - 247
-//    {Eigen::Vector2i{0, 1}, Eigen::Vector2i{0, -1}},   // 247 - 270
-//    {Eigen::Vector2i{0, 1}, Eigen::Vector2i{0, -1}},   // 270 - 292
-//    {Eigen::Vector2i{-1, 1}, Eigen::Vector2i{1, -1}},  // 292 - 315
-//    {Eigen::Vector2i{-1, 1}, Eigen::Vector2i{1, -1}},  // 315 - 337
-//    {Eigen::Vector2i{-1, 0}, Eigen::Vector2i{1, 0}}};  // 337 - 360
-
 const std::vector<std::vector<Eigen::Vector2i>> gradient_lookup{
     {Eigen::Vector2i{-1, 0}, Eigen::Vector2i{1, 0}},   // 0
     {Eigen::Vector2i{-1, -1}, Eigen::Vector2i{1, 1}},  // 45
@@ -198,12 +190,6 @@ class LinePoints {
 const std::vector<Eigen::Vector2i> CONNECT_FOUR{{-1, 0}, {0, -1}, {1, 0}, {0, 1}};
 const std::vector<Eigen::Vector2i> CONNECT_EIGHT{{-1, -1}, {0, -1}, {1, -1}, {1, 0},
                                                  {1, 1},   {0, 1},  {-1, 1}, {-1, 0}};
-
-namespace Eigen {
-bool operator<(const Eigen::Vector2i &a, const Eigen::Vector2i &b) {
-  return a.x() < b.x() || (a.x() == b.x() && a.y() < b.y());
-}
-}  // namespace Eigen
 
 double DeltaAngle(const double ang_1, const double ang_2) {
   auto delta = std::abs(ang_1 - ang_2);
@@ -415,28 +401,28 @@ cv::Mat VisualizeLineConnectivity(const cv::Mat &img, const std::vector<Line> &l
 }
 
 // Four corners describing a tag boundaries in image space.
-struct RawQuad {
-  std::array<Eigen::Vector2d, 4> corners{};
-};
+// struct RawQuad {
+//  std::array<Eigen::Vector2d, 4> corners{};
+//};
 
 // Quad with the bits stored as a binary matrix.
-struct UndecodedQuad {
-  std::array<Eigen::Vector2d, 4> corners{};
-  Eigen::MatrixXd bits{};
-};
+// struct UndecodedQuad {
+//  std::array<Eigen::Vector2d, 4> corners{};
+//  Eigen::MatrixXd bits{};
+//};
 
 // Quad with the bits encoded into a number.
-struct DecodedQuad {
-  std::array<Eigen::Vector2d, 4> corners{};
-  unsigned long int code{};
-};
+// struct DecodedQuad {
+//  std::array<Eigen::Vector2d, 4> corners{};
+//  unsigned long int code{};
+//};
 
 // A tag with a proper tag id from a tag family. Corners rotated according to tag orientation.
 // First corner bottom right then rotate around anti clockwise.
-struct Tag {
-  std::array<Eigen::Vector2d, 4> corners{};
-  int tag_id{};
-};
+// struct Tag {
+//  std::array<Eigen::Vector2d, 4> corners{};
+//  int tag_id{};
+//};
 
 // TODO:: Missing:: subpix refine
 RawQuad CreateQuad(const std::vector<int> &quad_line_ids, const std::vector<Line> &lines) {
@@ -759,69 +745,70 @@ std::vector<DecodedQuad> DecodeQuads(const std::vector<UndecodedQuad> &quads) {
   return decoded_quads;
 }
 
-std::vector<unsigned long long int> GenerateRotations(const unsigned long long int non_rotated_code,
-                                                      const int width, const int height) {
-  std::vector<unsigned long long int> rotated_codes;
-  // Represent the code as a matrix.
-  Eigen::MatrixXd tag_matrix(height, width);
-  auto code = non_rotated_code;
-  for (int j = height - 1; j >= 0; --j) {
-    for (int i = width - 1; i >= 0; --i) {
-      tag_matrix(j, i) = code & 1;
-      code >>= 1;
-    }
-  }
+// std::vector<unsigned long long int> GenerateRotations(const unsigned long long int
+// non_rotated_code,
+//                                                      const int width, const int height) {
+//  std::vector<unsigned long long int> rotated_codes;
+//  // Represent the code as a matrix.
+//  Eigen::MatrixXd tag_matrix(height, width);
+//  auto code = non_rotated_code;
+//  for (int j = height - 1; j >= 0; --j) {
+//    for (int i = width - 1; i >= 0; --i) {
+//      tag_matrix(j, i) = code & 1;
+//      code >>= 1;
+//    }
+//  }
 
-  // No rotation.
-  rotated_codes.push_back(non_rotated_code);
+//  // No rotation.
+//  rotated_codes.push_back(non_rotated_code);
 
-  // 1 90 degree anti-clockwise rotation of the original tag.
-  {
-    unsigned long long int code = 0;
-    int current_bit = (width * height) - 1;
-    for (int i = 0; i < width; ++i) {
-      for (int j = height - 1; j >= 0; --j) {
-        if (tag_matrix(j, i) > 0) {
-          code |= 1UL << current_bit;
-        }
-        current_bit--;
-      }
-    }
-    rotated_codes.push_back(code);
-  }
+//  // 1 90 degree anti-clockwise rotation of the original tag.
+//  {
+//    unsigned long long int code = 0;
+//    int current_bit = (width * height) - 1;
+//    for (int i = 0; i < width; ++i) {
+//      for (int j = height - 1; j >= 0; --j) {
+//        if (tag_matrix(j, i) > 0) {
+//          code |= 1UL << current_bit;
+//        }
+//        current_bit--;
+//      }
+//    }
+//    rotated_codes.push_back(code);
+//  }
 
-  // 2 90 degree anti-clockwise rotations of the original tag.
-  {
-    unsigned long long int code = 0;
-    int current_bit = (width * height) - 1;
-    for (int j = height - 1; j >= 0; --j) {
-      for (int i = width - 1; i >= 0; --i) {
-        if (tag_matrix(j, i) > 0) {
-          code |= 1UL << current_bit;
-        }
-        current_bit--;
-      }
-    }
-    rotated_codes.push_back(code);
-  }
+//  // 2 90 degree anti-clockwise rotations of the original tag.
+//  {
+//    unsigned long long int code = 0;
+//    int current_bit = (width * height) - 1;
+//    for (int j = height - 1; j >= 0; --j) {
+//      for (int i = width - 1; i >= 0; --i) {
+//        if (tag_matrix(j, i) > 0) {
+//          code |= 1UL << current_bit;
+//        }
+//        current_bit--;
+//      }
+//    }
+//    rotated_codes.push_back(code);
+//  }
 
-  // 3 90 degree anti-clockwise rotations of the original tag.
-  {
-    unsigned long long int code = 0;
-    int current_bit = (width * height) - 1;
-    for (int i = width - 1; i >= 0; --i) {
-      for (int j = 0; j < height; ++j) {
-        if (tag_matrix(j, i) > 0) {
-          code |= 1UL << current_bit;
-        }
-        current_bit--;
-      }
-    }
-    rotated_codes.push_back(code);
-  }
+//  // 3 90 degree anti-clockwise rotations of the original tag.
+//  {
+//    unsigned long long int code = 0;
+//    int current_bit = (width * height) - 1;
+//    for (int i = width - 1; i >= 0; --i) {
+//      for (int j = 0; j < height; ++j) {
+//        if (tag_matrix(j, i) > 0) {
+//          code |= 1UL << current_bit;
+//        }
+//        current_bit--;
+//      }
+//    }
+//    rotated_codes.push_back(code);
+//  }
 
-  return rotated_codes;
-}
+//  return rotated_codes;
+//}
 
 // Rotates the corners of the quad around by an integer number of clockwise rotations.
 std::array<Eigen::Vector2d, 4> RotateQuad(const std::array<Eigen::Vector2d, 4> &quad,
@@ -839,27 +826,19 @@ struct RotatedId {
   int rotation{};
 };
 
-std::vector<Tag> MatchDecodedQuads(const std::vector<DecodedQuad> &quads) {
+std::vector<Tag> MatchDecodedQuads(const std::vector<DecodedQuad> &quads,
+                                   const TagFamilyLookup &tag_family) {
   std::vector<Tag> detected_tags;
   detected_tags.reserve(quads.size());
 
-  std::unordered_map<unsigned long long, RotatedId> family_codes{};
-  for (int id = 0; id < AprilTags::t36h9_size; ++id) {
-    const auto rotations = GenerateRotations(AprilTags::t36h9[id], 6, 6);
-    for (int r = 0; r < rotations.size(); ++r) {
-      family_codes.insert({rotations[r], {id, r}});
-    }
-  }
-  std::cout << "Num codes " << family_codes.size() << std::endl;
-
   int i{};
   for (const auto &quad : quads) {
-    if (family_codes.count(quad.code)) {
-      const auto &rotated_id = family_codes[quad.code];
-      std::cout << "Found Match! quad id " << i << " quad code " << std::hex << quad.code
-                << std::dec << " tag id " << rotated_id.id << " rotation " << rotated_id.rotation
-                << " non rotated code " << std::endl;
-      detected_tags.push_back({RotateQuad(quad.corners, rotated_id.rotation), rotated_id.id});
+    TagId tag_id{};
+    if (tag_family.LookupTagId(quad.code, &tag_id)) {
+      std::cout << "Found Match. quad id " << i << " quad code " << std::hex << quad.code
+                << std::dec << " tag id " << tag_id.id << " rotation " << tag_id.rotation
+                << std::endl;
+      detected_tags.push_back({RotateQuad(quad.corners, tag_id.rotation), tag_id.id});
     }
     i++;
   }
@@ -933,7 +912,8 @@ void RunDetection(const cv::Mat &mat) {
   const auto decoded_quads = DecodeQuads(undecoded_quads);
   timer.logEvent("09_decode quads");
 
-  const auto detected_tags = MatchDecodedQuads(decoded_quads);
+  TagFamilyLookup tag_family(tag_detection::t36h9, 6);
+  const auto detected_tags = MatchDecodedQuads(decoded_quads, tag_family);
   timer.logEvent("10_lookup tag ids");
 
   if (debug) {
@@ -960,6 +940,9 @@ void RunDetection(const cv::Mat &mat) {
   full_timer.logEvent("everything");
   full_timer.printLoggedEvents();
 }
+}  // namespace tag_detection
+
+using namespace tag_detection;
 
 // TODO
 //

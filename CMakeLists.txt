@@ -10,6 +10,6 @@ find_package(Eigen3 REQUIRED)
 
 include_directories( ${OpenCV_INCLUDE_DIRS} )
 
-add_executable( pipeline src/pipeline.cc )
-target_link_libraries( pipeline ${OpenCV_LIBS} Eigen3::Eigen)
+add_executable(pipeline src/pipeline.cc src/tag_family_lookup.cc)
+target_link_libraries(pipeline ${OpenCV_LIBS} Eigen3::Eigen)
 

@@ -6,6 +6,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
+#include <optional>
 #include <set>
 
 #include "tag_detection/internal/internal_types.h"
@@ -152,6 +153,13 @@ Line MakeLine(const LinePoints &line_points) {
   Line line{};
   line.start = GetFurthestPoint(any_pt, line_points);
   line.end = GetFurthestPoint(line.start, line_points);
+
+  const auto new_end =
+      ((line.end.cast<double>() - line.start.cast<double>()) * 1.2).cast<int>() + line.start;
+  const auto new_start =
+      ((line.start.cast<double>() - line.end.cast<double>()) * 1.2).cast<int>() + line.end;
+  line.start = new_start;
+  line.end = new_end;
   return line;
 }
 
@@ -176,7 +184,8 @@ std::map<int, std::set<int>> MakeLineConnectivity(const std::vector<Line> &lines
   std::map<int, std::set<int>> line_connectivity;
   for (int i = 0; i < lines.size(); ++i) {
     for (int j = i + 1; j < lines.size(); ++j) {
-      if (LinesAreConnected(lines[i], lines[j], distance_squared)) {
+      const auto intersect = GetIntersection(lines[i], lines[j]);
+      if (intersect.has_value()) {
         line_connectivity[i].insert(j);
         line_connectivity[j].insert(i);
       }
@@ -188,10 +197,9 @@ std::map<int, std::set<int>> MakeLineConnectivity(const std::vector<Line> &lines
 RawQuad CreateQuad(const std::vector<int> &quad_line_ids, const std::vector<Line> &lines) {
   RawQuad quad{};
   for (int i = 0; i < 4; ++i) {
-    auto line_ends =
-        GetConnectedLineEnds(lines[quad_line_ids[i]], lines[quad_line_ids[(i + 1) % 4]]);
-    quad.corners[i] =
-        (line_ends.line_end_a.cast<double>() + line_ends.line_end_b.cast<double>()) / 2.0;
+    const auto intersect =
+        GetIntersection(lines[quad_line_ids[i]], lines[quad_line_ids[(i + 1) % 4]]);
+    quad.corners[i] = intersect.value();
   }
 
   // TODO:: put corner ordering in a function
@@ -317,6 +325,15 @@ bool CheckQuadSideLengths(const RawQuad &quad, const double side_length) {
   return true;
 }
 
+bool CheckQuadInsideImage(const RawQuad &quad, const int width, const int height) {
+  for (const auto &corner : quad.corners) {
+    if (corner.x() < 0 || corner.x() > width || corner.y() < 0 || corner.y() > height) {
+      return false;
+    }
+  }
+  return true;
+}
+
 template <typename EigenPointContainer>
 std::vector<cv::Point2f> ToCvPoints(const EigenPointContainer &points) {
   std::vector<cv::Point2f> cv_points;
@@ -338,6 +355,7 @@ void RefineEdges(const cv::Mat &image, RawQuad *quad) {
 
 std::vector<RawQuad> FindQuads(const std::vector<Line> &lines,
                                const std::map<int, std::set<int>> &line_connectivity,
+                               const int img_width, const int img_height,
                                const double min_side_length) {
   std::vector<RawQuad> quads;
   std::set<UniqueQuad> unique_quads;
@@ -348,7 +366,8 @@ std::vector<RawQuad> FindQuads(const std::vector<Line> &lines,
       const auto [itr, success] = unique_quads.insert(UniqueQuad(quad_line_ids));
       if (success) {
         auto quad = CreateQuad(quad_line_ids, lines);
-        if (CheckQuadSideLengths(quad, min_side_length)) {
+        if (CheckQuadSideLengths(quad, min_side_length) &&
+            CheckQuadInsideImage(quad, img_width, img_height)) {
           quads.push_back(std::move(quad));
         }
       }
@@ -361,7 +380,11 @@ std::vector<RawQuad> DetectQuadsInternal(const cv::Mat &img, const cv::Mat &grey
                                          const bool debug) {
   time_logger::TimeLogger timer;
 
-  auto img_gradients = CalculateImageGradients(greyscale_img);
+  cv::Mat blurred_img;
+  cv::GaussianBlur(greyscale_img, blurred_img, cv::Size2i{5, 5}, 0, 0);
+  timer.logEvent("00 Image blurring");
+
+  auto img_gradients = CalculateImageGradients(blurred_img);
   timer.logEvent("01 Image gradients");
 
   constexpr double kAbsImgGradientThresh = 100;
@@ -382,8 +405,13 @@ std::vector<RawQuad> DetectQuadsInternal(const cv::Mat &img, const cv::Mat &grey
   const auto line_connectivity = MakeLineConnectivity(lines, kMaxInterLineDistance);
   timer.logEvent("05 Make line connectivity");
 
-  auto quads = FindQuads(lines, line_connectivity, kMinLineLength);
+  auto quads = FindQuads(lines, line_connectivity, img.cols, img.rows, kMinLineLength);
   timer.logEvent("06 Find quads");
+
+  std::vector<RawQuad> non_refined_quads;
+  if (debug) {
+    non_refined_quads = quads;
+  }
 
   for (auto &quad : quads) {
     RefineEdges(greyscale_img, &quad);
@@ -393,6 +421,7 @@ std::vector<RawQuad> DetectQuadsInternal(const cv::Mat &img, const cv::Mat &grey
   if (debug) {
     timer.printLoggedEvents();
 
+    cv::imwrite("00_blurred_img.png", blurred_img);
     VisualizeImageGradients(img_gradients);
     VisualizeNonMaxImageGradients(img_gradients, non_max_pts);
     cv::imwrite("03_line_clusters.png", VisualizeLinePoints(lines_points, img.rows, img.cols));
@@ -401,7 +430,7 @@ std::vector<RawQuad> DetectQuadsInternal(const cv::Mat &img, const cv::Mat &grey
     cv::imwrite("04_lines.png", lines_img);
     cv::imwrite("05_line_connectivity.png",
                 VisualizeLineConnectivity(lines_img, lines, line_connectivity));
-    cv::imwrite("06_quads.png", VisualizeQuads(img, quads));
+    cv::imwrite("06_quads.png", VisualizeQuads(img, non_refined_quads));
     cv::imwrite("07_quads_refined.png", VisualizeQuads(img, quads));
   }
   return quads;

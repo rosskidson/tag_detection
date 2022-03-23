@@ -100,11 +100,10 @@ cv::Mat VisualizeLineConnectivity(const cv::Mat &img, const std::vector<Line> &l
       const Eigen::Vector2i line_centroid = (line.start + line.end) / 2;
       const Eigen::Vector2i other_line_centroid = (other_line.start + other_line.end) / 2;
 
-      const auto connection_points = GetConnectedLineEnds(line, other_line);
+      const auto connection_point = GetIntersection(line, other_line).value().cast<int>();
 
-      const Eigen::Vector2i line_pt = (line_centroid + connection_points.line_end_a) / 2;
-      const Eigen::Vector2i other_line_pt =
-          (other_line_centroid + connection_points.line_end_b) / 2;
+      const Eigen::Vector2i line_pt = (line_centroid + connection_point) / 2;
+      const Eigen::Vector2i other_line_pt = (other_line_centroid + connection_point) / 2;
 
       cv::line(viz_lines, {line_pt.x(), line_pt.y()}, {other_line_pt.x(), other_line_pt.y()},
                {255, 0, 255}, 1);

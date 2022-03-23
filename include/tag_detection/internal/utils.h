@@ -10,8 +10,6 @@ double ToPositiveDegrees(double radians);
 
 double DeltaAngle(const double ang_1, const double ang_2);
 
-bool LinesAreConnected(const Line &line_a, const Line &line_b, const double squared_distance);
-
-LineEnds GetConnectedLineEnds(const Line &line_a, const Line &line_b);
+std::optional<Eigen::Vector2d> GetIntersection(const Line &line_a, const Line &line_b);
 
 }  // namespace tag_detection

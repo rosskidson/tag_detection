@@ -1,5 +1,6 @@
 #include <iostream>
 #include <opencv2/highgui.hpp>
+#include <set>
 #include <string>
 
 #include "tag_detection/tag_detection.h"
@@ -7,7 +8,7 @@
 
 using namespace tag_detection;
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   std::string image_path(argv[1]);
   cv::Mat img = cv::imread(image_path, cv::IMREAD_COLOR);
   if (img.empty()) {
@@ -15,7 +16,14 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  TagFamilyLookup family(TagFamily::Tag36h11);
+  TagFamilyLookup family(TagFamily::Tag36h9);
   const auto tags = DetectTags(img, family, 1, true);
+  std::set<int> ids;
+  for (const auto& tag : tags) {
+    const auto [itr, inserted] = ids.insert(tag.tag_id);
+    if (not inserted) {
+      std::cout << "Duplicate: " << tag.tag_id << std::endl;
+    }
+  }
   return 0;
 }

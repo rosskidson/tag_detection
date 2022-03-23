@@ -1,3 +1,4 @@
+#include "tag_detection/internal/visualizations.h"
 
 #include <map>
 #include <opencv2/core.hpp>
@@ -9,6 +10,7 @@
 #include "tag_detection/internal/internal_types.h"
 #include "tag_detection/internal/line_points.h"
 #include "tag_detection/internal/utils.h"
+#include "tag_detection/types.h"
 
 namespace tag_detection {
 
@@ -47,8 +49,8 @@ cv::Mat VisualizeGradientDirections(const ImageGradients &gradients) {
 }
 
 void VisualizeImageGradients(const ImageGradients &gradients) {
-  cv::imwrite("01_img_grad.png", gradients.abs);
-  cv::imwrite("02_img_dir.png", VisualizeGradientDirections(gradients));
+  cv::imwrite("01a_img_grad.png", gradients.abs);
+  cv::imwrite("01b_img_dir.png", VisualizeGradientDirections(gradients));
 }
 
 void VisualizeNonMaxImageGradients(const ImageGradients &gradients, const cv::Mat &non_max_pts) {
@@ -62,11 +64,11 @@ void VisualizeNonMaxImageGradients(const ImageGradients &gradients, const cv::Ma
       }
     }
   }
-  cv::imwrite("03a_img_grad_non_max.png", abs_viz);
-  cv::imwrite("03b_img_dir_non_max.png", VisualizeGradientDirections({abs_viz, grad_viz}));
+  cv::imwrite("02a_img_grad_non_max.png", abs_viz);
+  cv::imwrite("02b_img_dir_non_max.png", VisualizeGradientDirections({abs_viz, grad_viz}));
 }
 
-void VisualizeLinePoints(const std::vector<LinePoints> &lines, const int rows, const int cols) {
+cv::Mat VisualizeLinePoints(const std::vector<LinePoints> &lines, const int rows, const int cols) {
   cv::Mat viz_clusters(rows, cols, CV_8UC3, cv::Scalar::all(0));
   for (const auto &line : lines) {
     const float rand_h = rand() % 360;
@@ -75,7 +77,7 @@ void VisualizeLinePoints(const std::vector<LinePoints> &lines, const int rows, c
       viz_clusters.at<cv::Vec3b>(point.y(), point.x()) = bgr;
     }
   }
-  cv::imwrite("04_clusters.png", viz_clusters);
+  return viz_clusters;
 }
 
 cv::Mat VisualizeLines(const cv::Mat &img, const std::vector<Line> &lines) {
@@ -109,6 +111,27 @@ cv::Mat VisualizeLineConnectivity(const cv::Mat &img, const std::vector<Line> &l
     }
   }
   return viz_lines;
+}
+
+cv::Mat VisualizeFinalDetections(const cv::Mat &img, const std::vector<Tag> &detected_tags) {
+  constexpr bool kShowCornerIndices = false;
+
+  auto labeled_tags = VisualizeQuads(img, detected_tags);
+  for (const auto tag : detected_tags) {
+    const auto corner_0 = tag.corners.front();
+    cv::putText(labeled_tags, std::to_string(tag.tag_id),
+                cv::Point2i{int(corner_0.x()), int(corner_0.y())}, cv::FONT_HERSHEY_PLAIN, 0.8,
+                cv::Scalar(0, 255, 0), 1);
+    if constexpr (kShowCornerIndices) {
+      for (int i = 0; i < 4; ++i) {
+        const auto tag_loc = tag.corners[i];
+        cv::putText(labeled_tags, std::to_string(i),
+                    cv::Point2i{int(tag_loc.x()), int(tag_loc.y())}, cv::FONT_HERSHEY_PLAIN, 0.6,
+                    cv::Scalar(0, 255, 0), 1);
+      }
+    }
+  }
+  return labeled_tags;
 }
 
 }  // namespace tag_detection

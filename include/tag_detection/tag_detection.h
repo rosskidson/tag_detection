@@ -13,17 +13,18 @@ namespace tag_detection {
  *
  *  @param img         The input image
  *  @param tag_family  A tag family lookup object.
+ *  @param tag_bits    How many bits for the tag border
  *  @param debug       Generate debug images if set to true.
  *
  *  @return  A vector of tag detections.
  *
  */
 std::vector<Tag> DetectTags(const cv::Mat& img, const TagFamilyLookup& tag_family,
-                            const bool debug = false);
+                            const int border_bits, const bool debug = false);
 
 /**
- * Detect candidate quads in an image and the tag codes. This may be used if the raw tag value is
- * required.
+ * Detect candidate quads in an image and the tag codes.
+ * This may be used if the raw tag value is required.
  *
  *  @param img         The input image.
  *  @param tag_bits    The number of bits (side length) of the tag not including border.
@@ -33,12 +34,13 @@ std::vector<Tag> DetectTags(const cv::Mat& img, const TagFamilyLookup& tag_famil
  *  @return  A vector of quad detections containing a quad corner and the tag code.
  *
  */
-// std::vector<DecodedQuad> DetectQuads(const cv::Mat& img, const int tag_bits, const int border,
-//                                     const bool debug = false);
+std::vector<QuadWithCode> DetectQuads(const cv::Mat& img, const int tag_bits, const int border_bits,
+                                      const bool debug = false);
 
 /**
- * Detect candidate quads in an image and the tag bit information. This may be used if the raw tag
- * bits are required, for instance, for reading the bits in a custom order.
+ * Detect candidate quads in an image and the tag bit information.
+ * This may be used if the raw tag bits are required, for instance, for reading the bits in a custom
+ * order.
  *
  *  @param img            The input image.
  *  @param total_tag_bits The number of bits (side length) of the tag including the border.
@@ -47,7 +49,19 @@ std::vector<Tag> DetectTags(const cv::Mat& img, const TagFamilyLookup& tag_famil
  *  @return  A vector of quad detections containing a quad corner and a matrix of the tag bits.
  *
  */
-// std::vector<UndecodedQuad> DetectUndecodedQuads(const cv::Mat& img, const int total_tag_bits,
-//                                                const bool debug = false);
+std::vector<QuadWithBits> DetectQuads(const cv::Mat& img, const int total_tag_bits,
+                                      const bool debug = false);
+
+/**
+ * Detect candidate quads in an image.
+ * Only the corners of the quads are returned, nothing else.
+ *
+ *  @param img            The input image.
+ *  @param debug          Generate debug images if set to true.
+ *
+ *  @return  A vector of quad detections.
+ *
+ */
+std::vector<RawQuad> DetectQuads(const cv::Mat& img, const bool debug);
 
 }  // namespace tag_detection

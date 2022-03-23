@@ -10,13 +10,15 @@ find_package(Eigen3 REQUIRED)
 
 include_directories( ${OpenCV_INCLUDE_DIRS} )
 
-add_executable(pipeline
-  src/pipeline.cc
+add_library(tag_detection 
   src/quad_detection.cc
+  src/quad_decoding.cc
+  src/tag_detection.cc
   src/tag_family_lookup.cc
   src/utils.cc
   src/visualizations.cc
 )
+target_link_libraries(tag_detection ${OpenCV_LIBS} Eigen3::Eigen)
 
-target_link_libraries(pipeline ${OpenCV_LIBS} Eigen3::Eigen)
-
+add_executable(example src/example.cc)
+target_link_libraries(example tag_detection)

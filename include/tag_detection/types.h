@@ -19,11 +19,11 @@ struct QuadWithBits {
 // Quad with the bits encoded into a number.
 struct QuadWithCode {
   std::array<Eigen::Vector2d, 4> corners{};
-  unsigned long int code{};
+  unsigned long long code{};
 };
 
 // A tag with a proper tag id from a tag family. Corners rotated according to tag orientation.
-// First corner bottom right then rotate around anti clockwise.
+// First corner is bottom right then rotate around anti clockwise.
 struct Tag {
   std::array<Eigen::Vector2d, 4> corners{};
   int tag_id{};

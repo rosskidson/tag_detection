@@ -1,3 +1,5 @@
+#include "tag_detection/internal/quad_detection.h"
+
 #include <Eigen/Core>
 #include <deque>
 #include <map>
@@ -15,8 +17,8 @@
 
 namespace tag_detection {
 
-ImageGradients CalculateImageGradients(const cv::Mat &mat, const bool debug) {
-  ImageGradients gradients;
+ImageGradients CalculateImageGradients(const cv::Mat &mat) {
+  ImageGradients gradients{};
   cv::Mat grad_x, grad_y;
   cv::Sobel(mat, grad_x, CV_32F, 1, 0);  // Opt: try 16S (short int)
   cv::Sobel(mat, grad_y, CV_32F, 0, 1);
@@ -33,14 +35,10 @@ ImageGradients CalculateImageGradients(const cv::Mat &mat, const bool debug) {
       gradients.direction.at<double>(y, x) = std::atan2(dy, dx);
     }
   }
-  if (debug) {
-    VisualizeImageGradients(gradients);
-  }
   return gradients;
 }
 
-cv::Mat NonMaximaSuppression(const ImageGradients &gradients, const double min_abs_gradient,
-                             const bool debug) {
+cv::Mat NonMaximaSuppression(const ImageGradients &gradients, const double min_abs_gradient) {
   const static std::vector<std::vector<Eigen::Vector2i>> gradient_lookup{
       {Eigen::Vector2i{-1, 0}, Eigen::Vector2i{1, 0}},   // 0
       {Eigen::Vector2i{-1, -1}, Eigen::Vector2i{1, 1}},  // 45
@@ -73,10 +71,6 @@ cv::Mat NonMaximaSuppression(const ImageGradients &gradients, const double min_a
         non_max_pts.at<uint8_t>(y, x) = 1;
       }
     }
-  }
-
-  if (debug) {
-    VisualizeNonMaxImageGradients(gradients, non_max_pts);
   }
   return non_max_pts;
 }
@@ -363,62 +357,53 @@ std::vector<RawQuad> FindQuads(const std::vector<Line> &lines,
   return quads;
 }
 
-std::vector<RawQuad> FindQuads(const cv::Mat &img, const bool debug) {
+std::vector<RawQuad> DetectQuadsInternal(const cv::Mat &img, const cv::Mat &greyscale_img,
+                                         const bool debug) {
   time_logger::TimeLogger timer;
 
-  cv::Mat bw_mat;
-  cv::cvtColor(img, bw_mat, cv::COLOR_BGR2GRAY);
-  timer.logEvent("01_convert color");
-
-  auto img_gradients = CalculateImageGradients(bw_mat, debug);
-  timer.logEvent("02_Image gradients");
+  auto img_gradients = CalculateImageGradients(greyscale_img);
+  timer.logEvent("01 Image gradients");
 
   constexpr double kAbsImgGradientThresh = 100;
-  const auto non_max_pts = NonMaximaSuppression(img_gradients, kAbsImgGradientThresh, debug);
-  timer.logEvent("03_non max ");
+  const auto non_max_pts = NonMaximaSuppression(img_gradients, kAbsImgGradientThresh);
+  timer.logEvent("02 non max suppresion");
 
   constexpr double kMaxAngleClusterDiff = M_PI / 8;
   constexpr int kMinLineClusterSize = 5;
   const auto lines_points = ClusterGradientDirections(img_gradients, non_max_pts,
                                                       kMaxAngleClusterDiff, kMinLineClusterSize);
-  timer.logEvent("04_Cluster gradients");
-
-  if (debug) {
-    VisualizeLinePoints(lines_points, img.rows, img.cols);
-  }
+  timer.logEvent("03 Cluster gradients");
 
   constexpr double kMinLineLength = 8;
   const auto lines = MakeLines(lines_points, kMinLineLength);
-  timer.logEvent("05_Make lines");
-
-  if (debug) {
-    cv::imwrite("05_lines.png", VisualizeLines(img, lines));
-  }
+  timer.logEvent("04 Make lines");
 
   constexpr double kMaxInterLineDistance = 5;
   const auto line_connectivity = MakeLineConnectivity(lines, kMaxInterLineDistance);
-  timer.logEvent("06_Make line connectivity");
-
-  if (debug) {
-    const auto base_img = VisualizeLines(img, lines);
-    cv::imwrite("06_line_connectivity.png",
-                VisualizeLineConnectivity(base_img, lines, line_connectivity));
-  }
+  timer.logEvent("05 Make line connectivity");
 
   auto quads = FindQuads(lines, line_connectivity, kMinLineLength);
-  timer.logEvent("07_Find quads");
-  if (debug) {
-    cv::imwrite("07_quads.png", VisualizeQuads(img, quads));
-  }
+  timer.logEvent("06 Find quads");
 
   for (auto &quad : quads) {
-    RefineEdges(bw_mat, &quad);
+    RefineEdges(greyscale_img, &quad);
   }
-  if (debug) {
-    cv::imwrite("08_quads_refined.png", VisualizeQuads(img, quads));
-  }
+  timer.logEvent("07 subpix refine");
 
-  timer.printLoggedEvents();
+  if (debug) {
+    timer.printLoggedEvents();
+
+    VisualizeImageGradients(img_gradients);
+    VisualizeNonMaxImageGradients(img_gradients, non_max_pts);
+    cv::imwrite("03_line_clusters.png", VisualizeLinePoints(lines_points, img.rows, img.cols));
+
+    const auto lines_img = VisualizeLines(img, lines);
+    cv::imwrite("04_lines.png", lines_img);
+    cv::imwrite("05_line_connectivity.png",
+                VisualizeLineConnectivity(lines_img, lines, line_connectivity));
+    cv::imwrite("06_quads.png", VisualizeQuads(img, quads));
+    cv::imwrite("07_quads_refined.png", VisualizeQuads(img, quads));
+  }
   return quads;
 }
 

@@ -21,8 +21,11 @@ class TagFamilyLookup {
 
   bool LookupTagId(const unsigned long long& code, TagId* tag_id) const;
 
+  int GetTagBits() const;
+
  private:
   std::unordered_map<unsigned long long, TagId> family_codes_{};
+  int tag_bits_{};
 };
 
 }  // namespace tag_detection

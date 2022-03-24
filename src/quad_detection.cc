@@ -18,6 +18,29 @@
 
 namespace tag_detection {
 
+// Tuning parameters
+
+// Gaussian blue kernel size for blurring the initial input image.
+constexpr int kBlurKernelSize = 5;
+
+// Minimum image gradient when thresholding edges.
+constexpr double kAbsImgGradientThresh = 100;
+
+// Maximum allowable difference in image gradient angle for accepting a point into a line cluster.
+constexpr double kMaxAngleClusterDiff = M_PI / 8;
+
+// Minimum number of pixels for a valid line cluster.
+constexpr int kMinLineClusterSize = 5;
+
+// Minimum allowable candidate line length.
+constexpr double kMinLineLength = 8;
+
+// How much to extend candidate lines. This is to help finding intersections at quad corners.
+constexpr double kLineExtensionFactor = 1.25;
+
+// Half the window size for subpixel refinement. The total window size will be (kWinSize * 2) + 1.
+constexpr int kWinSize = 2;
+
 ImageGradients CalculateImageGradients(const cv::Mat &mat) {
   ImageGradients gradients{};
   cv::Mat grad_x, grad_y;
@@ -155,9 +178,11 @@ Line MakeLine(const LinePoints &line_points) {
   line.end = GetFurthestPoint(line.start, line_points);
 
   const auto new_end =
-      ((line.end.cast<double>() - line.start.cast<double>()) * 1.2).cast<int>() + line.start;
+      ((line.end.cast<double>() - line.start.cast<double>()) * kLineExtensionFactor).cast<int>() +
+      line.start;
   const auto new_start =
-      ((line.start.cast<double>() - line.end.cast<double>()) * 1.2).cast<int>() + line.end;
+      ((line.start.cast<double>() - line.end.cast<double>()) * kLineExtensionFactor).cast<int>() +
+      line.end;
   line.start = new_start;
   line.end = new_end;
   return line;
@@ -178,9 +203,7 @@ std::vector<Line> MakeLines(const std::vector<LinePoints> &lines_points,
   return lines;
 }
 
-std::map<int, std::set<int>> MakeLineConnectivity(const std::vector<Line> &lines,
-                                                  const double &distance) {
-  const auto distance_squared = distance * distance;
+std::map<int, std::set<int>> MakeLineConnectivity(const std::vector<Line> &lines) {
   std::map<int, std::set<int>> line_connectivity;
   for (int i = 0; i < lines.size(); ++i) {
     for (int j = i + 1; j < lines.size(); ++j) {
@@ -344,7 +367,6 @@ std::vector<cv::Point2f> ToCvPoints(const EigenPointContainer &points) {
 }
 
 void RefineEdges(const cv::Mat &image, RawQuad *quad) {
-  constexpr int kWinSize = 2;
   auto corners = ToCvPoints(quad->corners);
   auto term_criteria = cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 40, 0.001);
   cv::cornerSubPix(image, corners, {kWinSize, kWinSize}, {-1, -1}, term_criteria);
@@ -381,28 +403,23 @@ std::vector<RawQuad> DetectQuadsInternal(const cv::Mat &img, const cv::Mat &grey
   time_logger::TimeLogger timer;
 
   cv::Mat blurred_img;
-  cv::GaussianBlur(greyscale_img, blurred_img, cv::Size2i{5, 5}, 0, 0);
+  cv::GaussianBlur(greyscale_img, blurred_img, cv::Size2i{kBlurKernelSize, kBlurKernelSize}, 0, 0);
   timer.logEvent("00 Image blurring");
 
   auto img_gradients = CalculateImageGradients(blurred_img);
   timer.logEvent("01 Image gradients");
 
-  constexpr double kAbsImgGradientThresh = 100;
   const auto non_max_pts = NonMaximaSuppression(img_gradients, kAbsImgGradientThresh);
   timer.logEvent("02 non max suppresion");
 
-  constexpr double kMaxAngleClusterDiff = M_PI / 8;
-  constexpr int kMinLineClusterSize = 5;
   const auto lines_points = ClusterGradientDirections(img_gradients, non_max_pts,
                                                       kMaxAngleClusterDiff, kMinLineClusterSize);
   timer.logEvent("03 Cluster gradients");
 
-  constexpr double kMinLineLength = 8;
   const auto lines = MakeLines(lines_points, kMinLineLength);
   timer.logEvent("04 Make lines");
 
-  constexpr double kMaxInterLineDistance = 5;
-  const auto line_connectivity = MakeLineConnectivity(lines, kMaxInterLineDistance);
+  const auto line_connectivity = MakeLineConnectivity(lines);
   timer.logEvent("05 Make line connectivity");
 
   auto quads = FindQuads(lines, line_connectivity, img.cols, img.rows, kMinLineLength);

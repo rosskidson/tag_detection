@@ -2,6 +2,8 @@
 
 #include <Eigen/Core>
 #include <complex>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <optional>
 
 namespace tag_detection {
 
@@ -66,6 +68,20 @@ std::optional<Eigen::Vector2d> GetIntersection(const Line &line_a, const Line &l
   } else {
     return std::nullopt;
   }
+}
+
+std::optional<cv::Mat> ToGreyscale(const cv::Mat &image) try {
+  if (image.channels() == 1) {
+    return image;
+  }
+  if (image.channels() == 3) {
+    cv::Mat bw;
+    cv::cvtColor(image, bw, cv::COLOR_BGR2GRAY);
+    return bw;
+  }
+  return std::nullopt;
+} catch (const cv::Exception &e) {
+  return std::nullopt;
 }
 
 };  // namespace tag_detection

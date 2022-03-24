@@ -9,13 +9,13 @@
 namespace tag_detection {
 
 std::vector<QuadWithBits> DetectQuadBits(const cv::Mat &greyscale_img,
-                                         const std::vector<RawQuad> &quads,
-                                         const int total_tag_bits, const bool debug);
+                                         const std::vector<RawQuad> &quads, int total_tag_bits,
+                                         bool debug);
 
-std::vector<QuadWithCode> ReadQuadBits(const std::vector<QuadWithBits> &quads, const int tag_bits,
-                                       const int border_bits, const bool debug);
+std::vector<QuadWithCode> ReadQuadBits(const std::vector<QuadWithBits> &quads, int tag_bits,
+                                       int border_bits, bool debug);
 
 std::vector<Tag> TagDetectionsFromDecodedQuads(const std::vector<QuadWithCode> &quads,
-                                               const TagFamilyLookup &tag_family, const bool debug);
+                                               const TagFamilyLookup &tag_family, bool debug);
 
 }  // namespace tag_detection

@@ -19,7 +19,7 @@ struct QuadWithBits {
 // Quad with the bits encoded into a number.
 struct QuadWithCode {
   std::array<Eigen::Vector2d, 4> corners{};
-  unsigned long long code{};
+  uint64_t code{};
 };
 
 // A tag with a proper tag id from a tag family. Corners rotated according to tag orientation.

@@ -16,15 +16,15 @@ enum class TagFamily { Tag16h5, Tag25h7, Tag25h9, Tag36h9, Tag36h11 };
 // considers all rotations of the tag and returns the rotation in addition to the id.
 class TagFamilyLookup {
  public:
-  TagFamilyLookup(const TagFamily& family);
-  TagFamilyLookup(const std::vector<unsigned long long>& family, const int tag_bits);
+  explicit TagFamilyLookup(const TagFamily& family);
+  TagFamilyLookup(const std::vector<uint64_t>& family, int tag_bits);
 
-  bool LookupTagId(const unsigned long long& code, TagId* tag_id) const;
+  bool LookupTagId(const uint64_t& code, TagId* tag_id) const;
 
   int GetTagBits() const;
 
  private:
-  std::unordered_map<unsigned long long, TagId> family_codes_{};
+  std::unordered_map<uint64_t, TagId> family_codes_{};
   int tag_bits_{};
 };
 

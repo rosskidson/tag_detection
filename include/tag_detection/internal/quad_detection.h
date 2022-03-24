@@ -7,6 +7,6 @@
 namespace tag_detection {
 
 std::vector<RawQuad> DetectQuadsInternal(const cv::Mat& img, const cv::Mat& greyscale_img,
-                                         const bool debug = false);
+                                         bool debug = false);
 
 }  // namespace tag_detection

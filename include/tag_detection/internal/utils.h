@@ -12,7 +12,13 @@ double ToDegrees(double radians);
 
 double ToPositiveDegrees(double radians);
 
-double DeltaAngle(const double ang_1, const double ang_2);
+double DeltaAngle(double ang_1, double ang_2);
+
+bool LinesAreConnected(const Line &line_a, const Line &line_b, const double squared_distance);
+
+LineEnds GetConnectedLineEnds(const Line &line_a, const Line &line_b);
+
+Line ExtendLine(const Line &line, const double extension_factor);
 
 std::optional<Eigen::Vector2d> GetIntersection(const Line &line_a, const Line &line_b);
 

@@ -35,6 +35,7 @@ cv::Mat VisualizeGradientDirections(const ImageGradients &gradients) {
   std::sort(vals.begin(), vals.end());
   const auto max_gradient = vals[vals.size() * 0.8];
 
+  // NOLINTNEXTLINE
   cv::Mat grad_dir_viz(gradients.abs.rows, gradients.abs.cols, CV_8UC3, cv::Scalar::all(0));
   for (int y = 0; y < gradients.direction.rows; ++y) {
     for (int x = 0; x < gradients.direction.cols; ++x) {
@@ -69,9 +70,9 @@ void VisualizeNonMaxImageGradients(const ImageGradients &gradients, const cv::Ma
 }
 
 cv::Mat VisualizeLinePoints(const std::vector<LinePoints> &lines, const int rows, const int cols) {
-  cv::Mat viz_clusters(rows, cols, CV_8UC3, cv::Scalar::all(0));
+  cv::Mat viz_clusters(rows, cols, CV_8UC3, cv::Scalar::all(0));  // NOLINT
   for (const auto &line : lines) {
-    const float rand_h = rand() % 360;
+    const float rand_h = rand() % 360;  // NOLINT rand is fine.
     const auto bgr = HSVtoBGR({rand_h, 1.0, 1.0});
     for (const auto &point : line.Points()) {
       viz_clusters.at<cv::Vec3b>(point.y(), point.x()) = bgr;
@@ -100,10 +101,11 @@ cv::Mat VisualizeLineConnectivity(const cv::Mat &img, const std::vector<Line> &l
       const Eigen::Vector2i line_centroid = (line.start + line.end) / 2;
       const Eigen::Vector2i other_line_centroid = (other_line.start + other_line.end) / 2;
 
-      const auto connection_point = GetIntersection(line, other_line).value().cast<int>();
+      const auto connection_points = GetConnectedLineEnds(line, other_line);
 
-      const Eigen::Vector2i line_pt = (line_centroid + connection_point) / 2;
-      const Eigen::Vector2i other_line_pt = (other_line_centroid + connection_point) / 2;
+      const Eigen::Vector2i line_pt = (line_centroid + connection_points.line_end_a) / 2;
+      const Eigen::Vector2i other_line_pt =
+          (other_line_centroid + connection_points.line_end_b) / 2;
 
       cv::line(viz_lines, {line_pt.x(), line_pt.y()}, {other_line_pt.x(), other_line_pt.y()},
                {255, 0, 255}, 1);
@@ -116,7 +118,7 @@ cv::Mat VisualizeFinalDetections(const cv::Mat &img, const std::vector<Tag> &det
   constexpr bool kShowCornerIndices = false;
 
   auto labeled_tags = VisualizeQuads(img, detected_tags);
-  for (const auto tag : detected_tags) {
+  for (const auto &tag : detected_tags) {
     const auto corner_0 = tag.corners.front();
     cv::putText(labeled_tags, std::to_string(tag.tag_id),
                 cv::Point2i{int(corner_0.x()), int(corner_0.y())}, cv::FONT_HERSHEY_PLAIN, 0.8,

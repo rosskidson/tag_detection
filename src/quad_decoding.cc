@@ -64,8 +64,8 @@ QuadWithBits DetectQuadBits(const cv::Mat &greyscale_img, const RawQuad &quad,
                             const int total_tag_bits, const std::optional<int> &debug_quad_id) {
   std::vector<cv::Point2d> corner_pts;
   corner_pts.reserve(4);
-  for (const auto &corner : quad.corners) {  // TODO:: range based/transform
-    corner_pts.push_back({corner.x(), corner.y()});
+  for (const auto &corner : quad.corners) {
+    corner_pts.emplace_back(corner.x(), corner.y());
   }
   const double rectified_size_x = total_tag_bits * 8;
   const double rectified_size_y = total_tag_bits * 8;
@@ -107,12 +107,11 @@ std::vector<QuadWithBits> DetectQuadBits(const cv::Mat &greyscale_img,
 }
 
 // Bits are read left to right, top to bottom, with the most significant bit top left.
-unsigned long long ReadQuadBits(const QuadWithBits &quad, const int tag_bits,
-                                const int border_bits) {
+uint64_t ReadQuadBits(const QuadWithBits &quad, const int tag_bits, const int border_bits) {
   const int total_tag_bits = tag_bits + (2 * border_bits);
   int corrupted_border_count{};
-  unsigned long long code = 0;
-  int current_bit = (tag_bits * tag_bits) - 1;
+  uint64_t code = 0;
+  uint current_bit = (tag_bits * tag_bits) - 1;
   for (int j = 0; j < total_tag_bits; ++j) {
     for (int i = 0; i < total_tag_bits; ++i) {
       // Check if it is a border bit.

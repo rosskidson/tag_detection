@@ -35,8 +35,11 @@ constexpr int kMinLineClusterSize = 5;
 // Minimum allowable candidate line length.
 constexpr double kMinLineLength = 8;
 
+// Maximum distance between two line end points to consider them as being connected.
+constexpr double kMaxInterLineDistance = 5;
+
 // How much to extend candidate lines. This is to help finding intersections at quad corners.
-constexpr double kLineExtensionFactor = 1.25;
+constexpr double kLineExtensionFactor = 1.5;
 
 // Half the window size for subpixel refinement. The total window size will be (kWinSize * 2) + 1.
 constexpr int kWinSize = 2;
@@ -80,14 +83,14 @@ cv::Mat NonMaximaSuppression(const ImageGradients &gradients, const double min_a
   non_max_pts.reserve(gradients.abs.cols * gradients.abs.rows);
   for (int y = 1; y < gradients.abs.rows - 1; ++y) {
     for (int x = 1; x < gradients.abs.cols - 1; ++x) {
-      auto &current_val = gradients.abs.at<double>(y, x);
+      const auto &current_val = gradients.abs.at<double>(y, x);
       if (current_val < min_abs_gradient) {
         non_max_pts.at<uint8_t>(y, x) = 1;
         continue;
       }
       const double direction_deg = ToPositiveDegrees(gradients.direction.at<double>(y, x));
       assert(direction_deg <= 360 && direction_deg >= 0);
-      const int index = std::round(direction_deg / 45.0);
+      const int index = int(std::round(direction_deg / 45.0));
       const auto &directions = gradient_lookup[index];
       const auto &val_0 = gradients.abs.at<double>(y + directions[0].y(), x + directions[0].x());
       const auto &val_1 = gradients.abs.at<double>(y + directions[1].y(), x + directions[1].x());
@@ -127,7 +130,7 @@ LinePoints ClusterPoints(const Eigen::Vector2i &start_pt, const double ang_thres
 
       auto grad_dir = gradients.direction.at<double>(candidate.y(), candidate.x());
       if (DeltaAngle(points.GetMeanDirection(), grad_dir) < ang_thresh) {
-        open_points.push_back(candidate);
+        open_points.emplace_back(candidate);
       }
     }
   }
@@ -176,15 +179,6 @@ Line MakeLine(const LinePoints &line_points) {
   Line line{};
   line.start = GetFurthestPoint(any_pt, line_points);
   line.end = GetFurthestPoint(line.start, line_points);
-
-  const auto new_end =
-      ((line.end.cast<double>() - line.start.cast<double>()) * kLineExtensionFactor).cast<int>() +
-      line.start;
-  const auto new_start =
-      ((line.start.cast<double>() - line.end.cast<double>()) * kLineExtensionFactor).cast<int>() +
-      line.end;
-  line.start = new_start;
-  line.end = new_end;
   return line;
 }
 
@@ -204,11 +198,11 @@ std::vector<Line> MakeLines(const std::vector<LinePoints> &lines_points,
 }
 
 std::map<int, std::set<int>> MakeLineConnectivity(const std::vector<Line> &lines) {
+  const auto distance_squared = kMaxInterLineDistance * kMaxInterLineDistance;
   std::map<int, std::set<int>> line_connectivity;
   for (int i = 0; i < lines.size(); ++i) {
     for (int j = i + 1; j < lines.size(); ++j) {
-      const auto intersect = GetIntersection(lines[i], lines[j]);
-      if (intersect.has_value()) {
+      if (LinesAreConnected(lines[i], lines[j], distance_squared)) {
         line_connectivity[i].insert(j);
         line_connectivity[j].insert(i);
       }
@@ -217,11 +211,24 @@ std::map<int, std::set<int>> MakeLineConnectivity(const std::vector<Line> &lines
   return line_connectivity;
 }
 
-RawQuad CreateQuad(const std::vector<int> &quad_line_ids, const std::vector<Line> &lines) {
+std::optional<RawQuad> CreateQuad(const std::vector<int> &quad_line_ids,
+                                  const std::vector<Line> &lines) {
+  std::vector<Line> extended_lines;
+  extended_lines.reserve(4);
+  for (const auto &line : lines) {
+    extended_lines.push_back(ExtendLine(line, kLineExtensionFactor));
+  }
+
   RawQuad quad{};
   for (int i = 0; i < 4; ++i) {
-    const auto intersect =
-        GetIntersection(lines[quad_line_ids[i]], lines[quad_line_ids[(i + 1) % 4]]);
+    const auto intersect = GetIntersection(extended_lines[quad_line_ids[i]],
+                                           extended_lines[quad_line_ids[(i + 1) % 4]]);
+    if (not intersect.has_value()) {
+      // Line connectivity is calculated a different way to finding the intersection between lines,
+      // mostly for speed reasons. Therefore it is possible that lines are 'connected' but do not
+      // intersect. Discard such occurances.
+      return std::nullopt;
+    }
     quad.corners[i] = intersect.value();
   }
 
@@ -272,7 +279,7 @@ RawQuad CreateQuad(const std::vector<int> &quad_line_ids, const std::vector<Line
 }
 
 struct UniqueQuad {
-  UniqueQuad(const std::vector<int> &quad_line_ids) {
+  explicit UniqueQuad(const std::vector<int> &quad_line_ids) {
     assert(quad_line_ids.size() == 4);
     for (int i = 0; i < 4; ++i) {
       line_ids[i] = quad_line_ids[i];
@@ -306,7 +313,6 @@ bool VectorContainsVal(const std::vector<T> &vec, const T &val) {
 }
 
 std::vector<std::vector<int>> FindQuadsFromStartLine(
-    const std::vector<Line> &lines,                         //
     const std::map<int, std::set<int>> &line_connectivity,  //
     const int start_line_id) {                              //
   std::vector<std::vector<int>> quads;
@@ -360,8 +366,9 @@ bool CheckQuadInsideImage(const RawQuad &quad, const int width, const int height
 template <typename EigenPointContainer>
 std::vector<cv::Point2f> ToCvPoints(const EigenPointContainer &points) {
   std::vector<cv::Point2f> cv_points;
+  cv_points.reserve(points.size());
   for (const auto &pt : points) {
-    cv_points.push_back({float(pt.x()), float(pt.y())});
+    cv_points.emplace_back(float(pt.x()), float(pt.y()));
   }
   return cv_points;
 }
@@ -382,15 +389,14 @@ std::vector<RawQuad> FindQuads(const std::vector<Line> &lines,
   std::vector<RawQuad> quads;
   std::set<UniqueQuad> unique_quads;
   for (const auto &[line_id, other_line_ids] : line_connectivity) {
-    auto potential_quads =
-        FindQuadsFromStartLine(lines, line_connectivity, line_id);  // TODO:: fix var name
+    auto potential_quads = FindQuadsFromStartLine(line_connectivity, line_id);
     for (const auto &quad_line_ids : potential_quads) {
       const auto [itr, success] = unique_quads.insert(UniqueQuad(quad_line_ids));
       if (success) {
         auto quad = CreateQuad(quad_line_ids, lines);
-        if (CheckQuadSideLengths(quad, min_side_length) &&
-            CheckQuadInsideImage(quad, img_width, img_height)) {
-          quads.push_back(std::move(quad));
+        if (quad.has_value() && CheckQuadSideLengths(*quad, min_side_length) &&
+            CheckQuadInsideImage(*quad, img_width, img_height)) {
+          quads.push_back(std::move(*quad));
         }
       }
     }
@@ -444,7 +450,13 @@ std::vector<RawQuad> DetectQuadsInternal(const cv::Mat &img, const cv::Mat &grey
     cv::imwrite("03_line_clusters.png", VisualizeLinePoints(lines_points, img.rows, img.cols));
 
     const auto lines_img = VisualizeLines(img, lines);
-    cv::imwrite("04_lines.png", lines_img);
+    cv::imwrite("04a_lines.png", lines_img);
+    std::vector<Line> extended_lines;
+    for (const auto &line : lines) {
+      extended_lines.emplace_back(ExtendLine(line, kLineExtensionFactor));
+    }
+
+    cv::imwrite("04b_lines_extended.png", VisualizeLines(img, extended_lines));
     cv::imwrite("05_line_connectivity.png",
                 VisualizeLineConnectivity(lines_img, lines, line_connectivity));
     cv::imwrite("06_quads.png", VisualizeQuads(img, non_refined_quads));

@@ -19,8 +19,8 @@ namespace tag_detection {
  *  @return  A vector of tag detections.
  *
  */
-std::vector<Tag> DetectTags(const cv::Mat& img, const TagFamilyLookup& tag_family,
-                            const int border_bits, const bool debug = false);
+std::vector<Tag> DetectTags(const cv::Mat& img, const TagFamilyLookup& tag_family, int border_bits,
+                            bool debug = false);
 
 /**
  * Detect candidate quads in an image and the tag codes.
@@ -34,8 +34,8 @@ std::vector<Tag> DetectTags(const cv::Mat& img, const TagFamilyLookup& tag_famil
  *  @return  A vector of quad detections containing a quad corner and the tag code.
  *
  */
-std::vector<QuadWithCode> DetectQuads(const cv::Mat& img, const int tag_bits, const int border_bits,
-                                      const bool debug = false);
+std::vector<QuadWithCode> DetectQuads(const cv::Mat& img, int tag_bits, int border_bits,
+                                      bool debug = false);
 
 /**
  * Detect candidate quads in an image and the tag bit information.
@@ -49,8 +49,7 @@ std::vector<QuadWithCode> DetectQuads(const cv::Mat& img, const int tag_bits, co
  *  @return  A vector of quad detections containing a quad corner and a matrix of the tag bits.
  *
  */
-std::vector<QuadWithBits> DetectQuads(const cv::Mat& img, const int total_tag_bits,
-                                      const bool debug = false);
+std::vector<QuadWithBits> DetectQuads(const cv::Mat& img, int total_tag_bits, bool debug = false);
 
 /**
  * Detect candidate quads in an image.
@@ -62,6 +61,6 @@ std::vector<QuadWithBits> DetectQuads(const cv::Mat& img, const int total_tag_bi
  *  @return  A vector of quad detections.
  *
  */
-std::vector<RawQuad> DetectQuads(const cv::Mat& img, const bool debug);
+std::vector<RawQuad> DetectQuads(const cv::Mat& img, bool debug);
 
 }  // namespace tag_detection

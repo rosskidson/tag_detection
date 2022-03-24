@@ -31,7 +31,8 @@ std::vector<Tag> DetectTags(const cv::Mat& img, const TagFamilyLookup& tag_famil
   const auto quads_with_codes =
       ReadQuadBits(quads_with_bits, tag_family.GetTagBits(), border_bits, debug);
 
-  const auto detections = TagDetectionsFromDecodedQuads(quads_with_codes, tag_family, debug);
+  // Declared non const for automatic move.
+  auto detections = TagDetectionsFromDecodedQuads(quads_with_codes, tag_family, debug);
 
   if (debug) {
     cv::imwrite("09_labelled_tags.png", VisualizeFinalDetections(img, detections));

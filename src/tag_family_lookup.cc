@@ -12,9 +12,8 @@
 
 namespace tag_detection {
 
-std::vector<unsigned long long int> GenerateRotations(const unsigned long long int non_rotated_code,
-                                                      const int tag_bits) {
-  std::vector<unsigned long long int> rotated_codes;
+std::vector<uint64_t> GenerateRotations(const uint64_t non_rotated_code, const int tag_bits) {
+  std::vector<uint64_t> rotated_codes;
   // Represent the code as a matrix.
   Eigen::MatrixXd tag_matrix(tag_bits, tag_bits);
   auto code = non_rotated_code;
@@ -30,7 +29,7 @@ std::vector<unsigned long long int> GenerateRotations(const unsigned long long i
 
   // 1 90 degree anti-clockwise rotation of the original tag.
   {
-    unsigned long long int code = 0;
+    uint64_t code = 0;
     int current_bit = (tag_bits * tag_bits) - 1;
     for (int i = 0; i < tag_bits; ++i) {
       for (int j = tag_bits - 1; j >= 0; --j) {
@@ -45,7 +44,7 @@ std::vector<unsigned long long int> GenerateRotations(const unsigned long long i
 
   // 2 90 degree anti-clockwise rotations of the original tag.
   {
-    unsigned long long int code = 0;
+    uint64_t code = 0;
     int current_bit = (tag_bits * tag_bits) - 1;
     for (int j = tag_bits - 1; j >= 0; --j) {
       for (int i = tag_bits - 1; i >= 0; --i) {
@@ -60,7 +59,7 @@ std::vector<unsigned long long int> GenerateRotations(const unsigned long long i
 
   // 3 90 degree anti-clockwise rotations of the original tag.
   {
-    unsigned long long int code = 0;
+    uint64_t code = 0;
     int current_bit = (tag_bits * tag_bits) - 1;
     for (int i = tag_bits - 1; i >= 0; --i) {
       for (int j = 0; j < tag_bits; ++j) {
@@ -92,7 +91,7 @@ int GetFamilySize(const TagFamily& family) {
   return {};
 }
 
-std::vector<unsigned long long> GetFamilyCodes(const TagFamily& family) {
+std::vector<uint64_t> GetFamilyCodes(const TagFamily& family) {
   switch (family) {
     case TagFamily::Tag16h5:
       return t16h5;
@@ -111,7 +110,7 @@ std::vector<unsigned long long> GetFamilyCodes(const TagFamily& family) {
 TagFamilyLookup::TagFamilyLookup(const TagFamily& family)
     : TagFamilyLookup(GetFamilyCodes(family), GetFamilySize(family)) {}
 
-TagFamilyLookup::TagFamilyLookup(const std::vector<unsigned long long>& family, const int tag_bits)
+TagFamilyLookup::TagFamilyLookup(const std::vector<uint64_t>& family, const int tag_bits)
     : tag_bits_(tag_bits) {
   for (int id = 0; id < family.size(); ++id) {
     const auto rotations = GenerateRotations(family[id], tag_bits);
@@ -121,7 +120,7 @@ TagFamilyLookup::TagFamilyLookup(const std::vector<unsigned long long>& family, 
   }
 }
 
-bool TagFamilyLookup::LookupTagId(const unsigned long long& code, TagId* tag_id) const {
+bool TagFamilyLookup::LookupTagId(const uint64_t& code, TagId* tag_id) const {
   if (family_codes_.count(code)) {
     *tag_id = family_codes_.at(code);
     return true;

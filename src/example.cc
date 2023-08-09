@@ -3,6 +3,7 @@
 #include <set>
 #include <string>
 
+#include "tag_detection/internal/utils.h"  // REMOVE
 #include "tag_detection/tag_detection.h"
 #include "tag_detection/tag_family_lookup.h"
 

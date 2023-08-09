@@ -14,6 +14,8 @@ namespace tag_detection {
 cv::Mat VisualizeGradientDirections(const ImageGradients &gradients);
 void VisualizeImageGradients(const ImageGradients &gradients);
 void VisualizeNonMaxImageGradients(const ImageGradients &gradients, const cv::Mat &non_max_pts);
+cv::Mat VisualizeMaxGradientSubPix(const cv::Mat &img, cv::Rect &roi, const cv::Mat &max_pts_subpix,
+                                   const int super_sample = 10);
 cv::Mat VisualizeLinePoints(const std::vector<LinePoints> &lines, int rows, int cols);
 cv::Mat VisualizeLines(const cv::Mat &img, const std::vector<Line> &lines);
 

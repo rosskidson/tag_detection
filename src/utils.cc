@@ -1,6 +1,7 @@
 #include "tag_detection/internal/utils.h"
 
 #include <Eigen/Core>
+#include <Eigen/Dense>
 #include <complex>
 #include <iostream>
 #include <opencv2/imgproc/imgproc.hpp>
@@ -103,6 +104,27 @@ std::optional<cv::Mat> ToGreyscale(const cv::Mat &image) try {
   return std::nullopt;
 } catch (const cv::Exception &e) {
   return std::nullopt;
+}
+
+Eigen::Vector3d FitParabola(const std::array<Eigen::Vector2d, 3> &pts) {
+  Eigen::Matrix3d A{Eigen::Matrix3d::Zero()};
+  for (int i = 0; i < 3; ++i) {
+    const auto &x = pts[i].x();
+    A(i, 0) = x * x;
+    A(i, 1) = x;
+    A(i, 2) = 1;
+  }
+
+  const Eigen::Vector3d B{pts[0].y(), pts[1].y(), pts[2].y()};
+
+  return A.inverse() * B;
+}
+
+Eigen::Vector2d FindMinOrMax(const Eigen::Vector3d &parabola_eq) {
+  const auto &A = parabola_eq.x();
+  const auto &B = parabola_eq.y();
+  const auto &C = parabola_eq.z();
+  return {-B / (2 * A), C - (B * B) / (4 * A)};
 }
 
 }  // namespace tag_detection

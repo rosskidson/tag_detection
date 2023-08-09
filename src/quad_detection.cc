@@ -24,7 +24,7 @@ namespace tag_detection {
 constexpr int kBlurKernelSize = 5;
 
 // Minimum image gradient when thresholding edges.
-constexpr double kAbsImgGradientThresh = 100;
+constexpr double kAbsImgGradientThresh = 70;
 
 // Maximum allowable difference in image gradient angle for accepting a point into a line cluster.
 constexpr double kMaxAngleClusterDiff = M_PI / 8;
@@ -65,33 +65,40 @@ ImageGradients CalculateImageGradients(const cv::Mat &mat) {
   return gradients;
 }
 
-cv::Mat NonMaximaSuppression(const ImageGradients &gradients, const double min_abs_gradient) {
+std::vector<Eigen::Vector2i> GetNeighborGradientDirections(const double gradient_direction) {
   const static std::vector<std::vector<Eigen::Vector2i>> gradient_lookup{
       {Eigen::Vector2i{-1, 0}, Eigen::Vector2i{1, 0}},   // 0
       {Eigen::Vector2i{-1, -1}, Eigen::Vector2i{1, 1}},  // 45
-      {Eigen::Vector2i{0, 1}, Eigen::Vector2i{0, -1}},   // 90
+      {Eigen::Vector2i{0, -1}, Eigen::Vector2i{0, 1}},   // 90
       {Eigen::Vector2i{-1, 1}, Eigen::Vector2i{1, -1}},  // 135
       {Eigen::Vector2i{-1, 0}, Eigen::Vector2i{1, 0}},   // 180
       {Eigen::Vector2i{-1, -1}, Eigen::Vector2i{1, 1}},  // 225
-      {Eigen::Vector2i{0, 1}, Eigen::Vector2i{0, -1}},   // 270
+      {Eigen::Vector2i{0, -1}, Eigen::Vector2i{0, 1}},   // 270
       {Eigen::Vector2i{-1, 1}, Eigen::Vector2i{1, -1}},  // 315
       {Eigen::Vector2i{-1, 0}, Eigen::Vector2i{1, 0}}};  // 360
+  const double direction_deg = ToPositiveDegrees(gradient_direction);
+  assert(direction_deg <= 360 && direction_deg >= 0);
+  const int index = int(std::round(direction_deg / 45.0));
+  return gradient_lookup[index];
+}
 
+cv::Mat NonMaximaSuppression(const ImageGradients &gradients, const double min_abs_gradient) {
   // 0 = max point, 1 = non max point
   cv::Mat non_max_pts(gradients.abs.rows, gradients.abs.cols, CV_8U, cv::Scalar(0));
 
   non_max_pts.reserve(gradients.abs.cols * gradients.abs.rows);
-  for (int y = 1; y < gradients.abs.rows - 1; ++y) {
-    for (int x = 1; x < gradients.abs.cols - 1; ++x) {
+  for (int y = 0; y < gradients.abs.rows; ++y) {
+    for (int x = 0; x < gradients.abs.cols; ++x) {
+      if (y == 0 || x == 0 || y == gradients.abs.rows - 1 || x == gradients.abs.cols - 1) {
+        non_max_pts.at<uint8_t>(y, x) = 1;
+        continue;
+      }
       const auto &current_val = gradients.abs.at<double>(y, x);
       if (current_val < min_abs_gradient) {
         non_max_pts.at<uint8_t>(y, x) = 1;
         continue;
       }
-      const double direction_deg = ToPositiveDegrees(gradients.direction.at<double>(y, x));
-      assert(direction_deg <= 360 && direction_deg >= 0);
-      const int index = int(std::round(direction_deg / 45.0));
-      const auto &directions = gradient_lookup[index];
+      const auto directions = GetNeighborGradientDirections(gradients.direction.at<double>(y, x));
       const auto &val_0 = gradients.abs.at<double>(y + directions[0].y(), x + directions[0].x());
       const auto &val_1 = gradients.abs.at<double>(y + directions[1].y(), x + directions[1].x());
       if (val_0 > current_val || val_1 > current_val) {
@@ -100,6 +107,34 @@ cv::Mat NonMaximaSuppression(const ImageGradients &gradients, const double min_a
     }
   }
   return non_max_pts;
+}
+
+cv::Mat GradientMaximumSubPix(const ImageGradients &gradients, const cv::Mat &non_max_pts) {
+  cv::Mat max_pts_subpix(gradients.abs.rows, gradients.abs.cols, CV_64FC2, cv::Scalar::all(0));
+  for (int y = 0; y < gradients.abs.rows; ++y) {
+    for (int x = 0; x < gradients.abs.cols; ++x) {
+      if (non_max_pts.at<uint8_t>(y, x) == 1) {
+        continue;
+      }
+      const auto directions = GetNeighborGradientDirections(gradients.direction.at<double>(y, x));
+      const Eigen::Vector2i pt_1{x, y};
+      const Eigen::Vector2i pt_0 = pt_1 + directions[0];
+      const Eigen::Vector2i pt_2 = pt_1 + directions[1];
+
+      std::array<Eigen::Vector2d, 3> pts;
+      pts[0] = {-1, gradients.abs.at<double>(pt_0.y(), pt_0.x())};
+      pts[1] = {0, gradients.abs.at<double>(pt_1.y(), pt_1.x())};
+      pts[2] = {1, gradients.abs.at<double>(pt_2.y(), pt_2.x())};
+
+      const auto max = FindMinOrMax(FitParabola(pts));
+      const auto subpix_dir = max.x() > 0 ? directions[1] : directions[0];
+      Eigen::Vector2d max_pt_subpix = (std::abs(max.x()) * subpix_dir.cast<double>());
+
+      max_pts_subpix.at<cv::Vec2d>(y, x)[0] = max_pt_subpix.x();
+      max_pts_subpix.at<cv::Vec2d>(y, x)[1] = max_pt_subpix.y();
+    }
+  }
+  return max_pts_subpix;
 }
 
 LinePoints ClusterPoints(const Eigen::Vector2i &start_pt, const double ang_thresh,
@@ -418,6 +453,9 @@ std::vector<RawQuad> DetectQuadsInternal(const cv::Mat &img, const cv::Mat &grey
   const auto non_max_pts = NonMaximaSuppression(img_gradients, kAbsImgGradientThresh);
   timer.logEvent("02 non max suppresion");
 
+  cv::Rect2i a;
+  const auto max_pts_subpix = GradientMaximumSubPix(img_gradients, non_max_pts);
+
   const auto lines_points = ClusterGradientDirections(img_gradients, non_max_pts,
                                                       kMaxAngleClusterDiff, kMinLineClusterSize);
   timer.logEvent("03 Cluster gradients");
@@ -447,6 +485,14 @@ std::vector<RawQuad> DetectQuadsInternal(const cv::Mat &img, const cv::Mat &grey
     cv::imwrite("00_blurred_img.png", blurred_img);
     VisualizeImageGradients(img_gradients);
     VisualizeNonMaxImageGradients(img_gradients, non_max_pts);
+
+    cv::Mat gradients_debug;
+    img_gradients.abs.convertTo(gradients_debug, CV_8U, 0.25);
+    cv::Rect roi(900, 300, 100, 100);
+    cv::imwrite("03a_max_subpix.png",
+                VisualizeMaxGradientSubPix(gradients_debug, roi, max_pts_subpix));
+    cv::imwrite("03b_max_subpix.png", VisualizeMaxGradientSubPix(blurred_img, roi, max_pts_subpix));
+
     cv::imwrite("03_line_clusters.png", VisualizeLinePoints(lines_points, img.rows, img.cols));
 
     const auto lines_img = VisualizeLines(img, lines);

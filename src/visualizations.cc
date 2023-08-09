@@ -69,6 +69,38 @@ void VisualizeNonMaxImageGradients(const ImageGradients &gradients, const cv::Ma
   cv::imwrite("02b_img_dir_non_max.png", VisualizeGradientDirections({abs_viz, grad_viz}));
 }
 
+cv::Mat VisualizeMaxGradientSubPix(const cv::Mat &img, cv::Rect &roi, const cv::Mat &max_pts_subpix,
+                                   const int super_sample) {
+  cv::Mat roi_img = img(roi);
+  cv::Mat roi_magnified(roi_img.rows * super_sample, roi_img.cols * super_sample, CV_8UC1,
+                        cv::Scalar(0));
+  for (int y = 0; y < roi_magnified.rows; ++y) {
+    for (int x = 0; x < roi_magnified.cols; ++x) {
+      if (y % super_sample == 0) {
+        continue;
+      }
+      if (x % super_sample == 0) {
+        continue;
+      }
+      const auto y_orig = y / super_sample;
+      const auto x_orig = x / super_sample;
+      roi_magnified.at<uint8_t>(y, x) = roi_img.at<uint8_t>(y_orig, x_orig);
+    }
+  }
+
+  cv::Mat roi_max_pts = max_pts_subpix(roi);
+  for (int y = 0; y < roi_max_pts.rows; ++y) {
+    for (int x = 0; x < roi_max_pts.cols; ++x) {
+      const auto &subpix = roi_max_pts.at<cv::Vec2d>(y, x);
+      if (std::abs(subpix[0]) > 0 || std::abs(subpix[1]) > 0) {
+        roi_magnified.at<uint8_t>(super_sample * (y + 0.5 + subpix[1]),
+                                  super_sample * (x + 0.5 + subpix[0])) = 128;
+      }
+    }
+  }
+  return roi_magnified;
+}
+
 cv::Mat VisualizeLinePoints(const std::vector<LinePoints> &lines, const int rows, const int cols) {
   cv::Mat viz_clusters(rows, cols, CV_8UC3, cv::Scalar::all(0));  // NOLINT
   for (const auto &line : lines) {
